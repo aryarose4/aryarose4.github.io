@@ -145,13 +145,13 @@ newsletter:
 
 collections:
   books:
-    output: true
+    output: false
   news:
     defaults:
       layout: post
-    output: true
+    output: false
   projects:
-    output: true
+    output: false
 
 # -----------------------------------------------------------------------------
 # Jekyll settings
@@ -173,7 +173,13 @@ kramdown:
 # Includes & excludes
 include: ["_pages", "_scripts"]
 exclude:
-  - Unused-pages/
+  - _books/
+  - _pages/books.md
+  - _news/
+  - _pages/news.md
+  - _pages/profiles.md
+  - _pages/projects.md
+  - _page/repositories.md
   - bin/
   - CONTRIBUTING.md
   - CUSTOMIZE.md
@@ -265,8 +271,8 @@ display_categories: ["external-services"] # these categories will be displayed o
 # -----------------------------------------------------------------------------
 
 scholar:
-  last_name: [Einstein]
-  first_name: [Albert, A.]
+  last_name: [Yae]
+  first_name: [Arya]
 
   style: apa
   locale: en
