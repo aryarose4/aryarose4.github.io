@@ -2,7 +2,7 @@
 layout: about
 title: Home
 permalink: /
-subtitle: <a href='#'>Affiliations</a>. University of Oregon Mathematics Department
+subtitle: University of Oregon Mathematics Department
 
 profile:
   align: right
@@ -10,7 +10,7 @@ profile:
   image_circular: false # crops the image to make it circular
   more_info: >
     <p>Fenton 305</p>
-    <p>1585 E 13th Ave</p>
+    <p>1021 E 13th Ave</p>
     <p>Eugene, OR 97403</p>
 
 selected_papers: false # includes a list of papers marked as "selected={true}"
