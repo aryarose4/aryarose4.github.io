@@ -37,21 +37,18 @@
       "institution": "University of Oregon",
       "location": "Eugene, Oregon",
       "url": "https://math.uoregon.edu",
-      "area": "Mathematics",
-      "studyType": "Ph.D.",
-      "startDate": "September 2019",
-      "endDate": "Present",
-      "score": "10",
-      "courses": ["Hyperkähler Geometry"]
+      "studyType": "Ph.D. in Mathematics",
+      "area": ["Dissertation Title: Degenerations of Hyperkähler Metrics", "Advisor: Laura Fredrickson"],
+      "startDate": "Sep. 2019",
+      "endDate": "Present"
     },
     {
       "institution": "Seattle University",
       "location": "Seattle, Washington",
       "url": "https://www.seattleu.edu/science-engineering/academic-departments/department-of-mathematics/",
-      "area": "Mathematics",
       "studyType": "B.S. in Mathematics",
-      "date": "June 2019",
-      "score": "summa cum laude"
+      "area": ["Thesis Title: Set Theory and Mathematical Logic", "Advisor: Dylan Helliwell", "Graduated summa cum laude"],
+      "date": "June 2019"
     },
     {
       "institution": "Bellevue College",
@@ -59,6 +56,38 @@
       "url": "https://www.bellevuecollege.edu/",
       "studyType": "Associates in Arts and Science",
       "date": "June 2017"
+    }
+  ],
+  "awards": [
+    {
+      "title": "NSF Research and Training Grant (RTG) Fellowship",
+      "date": "2021, 2023, 2024, 2025",
+      "awarder": "University of Oregon Mathematics Department"
+    },
+    {
+      "title": "Anderson Teaching Award",
+      "date": "2024",
+      "awarder": "University of Oregon Mathematics Department"
+    },
+    {
+      "title": "Anderson Research Award",
+      "date": "2023",
+      "awarder": "University of Oregon Mathematics Department"
+    },
+    {
+      "title": "Civin Award",
+      "date": "2020",
+      "awarder": "University of Oregon Mathematics Department"
+    },
+    {
+      "title": "Mirbagheri-Yandl Achievement Award",
+      "date": "2019",
+      "awarder": "Seattle University Mathematics Department"
+    },
+    {
+      "title": "Lebon Prize for Excellence in Mathematics",
+      "date": "2017",
+      "awarder": "Bellevue College Mathematics Department"
     }
   ],
   "service": [
@@ -119,38 +148,6 @@
       "endDate": "2022"
     }
   ],
-  "awards": [
-    {
-      "title": "NSF Research and Training Grant (RTG) Fellowship",
-      "date": "2021, 2023, 2024, 2025",
-      "awarder": "University of Oregon Mathematics Department"
-    },
-    {
-      "title": "Anderson Teaching Award",
-      "date": "2024",
-      "awarder": "University of Oregon Mathematics Department"
-    },
-    {
-      "title": "Anderson Research Award",
-      "date": "2023",
-      "awarder": "University of Oregon Mathematics Department"
-    },
-    {
-      "title": "Civin Award",
-      "date": "2020",
-      "awarder": "University of Oregon Mathematics Department"
-    },
-    {
-      "title": "Mirbagheri-Yandl Achievement Award",
-      "date": "2019",
-      "awarder": "Seattle University Mathematics Department"
-    },
-    {
-      "title": "Lebon Prize for Excellence in Mathematics",
-      "date": "2017",
-      "awarder": "Bellevue College Mathematics Department"
-    }
-  ],
   "certificates": [
     {
       "name": "Machine Learning",
@@ -198,13 +195,12 @@
   "publications": [
     {
       "name": "Hyperkähler Degeneration of ALG-D_4 Gravitational Instantons",
-      "releaseDate": "2025+ (in preparation)"
+      "releaseDate": "2025+ (upcoming)"
     },
     {
       "name": "Pole Order Reduction via Griffiths Residues on Grassmannians",
       "author": "Andy Huchala, Arya Yae",
-      "publisher": "Annalen der Physik",
-      "releaseDate": "2026+ (in preparation)"
+      "releaseDate": "2026+ (upcoming)"
     }
   ],
   "skills": [
