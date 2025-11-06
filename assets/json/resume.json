@@ -38,7 +38,7 @@
       "location": "Eugene, Oregon",
       "url": "https://math.uoregon.edu",
       "studyType": "Ph.D. in Mathematics",
-      "area": ["Dissertation Title: Degenerations of Hyperkähler Metrics", "Advisor: Laura Fredrickson"],
+      "highlights": ["Dissertation Title: Degenerations of Hyperkähler Metrics", "Advisor: Laura Fredrickson"],
       "startDate": "Sep. 2019",
       "endDate": "Present"
     },
@@ -47,15 +47,15 @@
       "location": "Seattle, Washington",
       "url": "https://www.seattleu.edu/science-engineering/academic-departments/department-of-mathematics/",
       "studyType": "B.S. in Mathematics",
-      "area": ["Thesis Title: Set Theory and Mathematical Logic", "Advisor: Dylan Helliwell", "Graduated summa cum laude"],
-      "date": "June 2019"
+      "highlights": ["Thesis Title: Set Theory and Mathematical Logic", "Advisor: Dylan Helliwell", "Graduated summa cum laude"],
+      "endDate": "June 2019"
     },
     {
       "institution": "Bellevue College",
       "location": "Bellevue, Washington",
       "url": "https://www.bellevuecollege.edu/",
       "studyType": "Associates in Arts and Science",
-      "date": "June 2017"
+      "endDate": "June 2017"
     }
   ],
   "awards": [
@@ -90,7 +90,7 @@
       "awarder": "Bellevue College Mathematics Department"
     }
   ],
-  "service": [
+  "volunteer": [
     {
       "organization": "UO Student Geometry/Topology Seminar",
       "location": "Eugene, Oregon",

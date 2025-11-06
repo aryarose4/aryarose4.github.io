@@ -46,7 +46,7 @@ repo_trophies:
 
 navbar_fixed: true
 footer_fixed: true
-search_enabled: true
+search_enabled: false
 socials_in_search: true
 posts_in_search: true
 bib_search: true
@@ -172,6 +172,7 @@ kramdown:
 include: ["_pages", "_scripts"]
 exclude:
   - _posts/
+  - _projects/
   - _books/
   - _pages/books.md
   - _news/
@@ -645,7 +646,7 @@ jsonresume:
   - publications
 #  - projects
   - awards
-  - service
+  - volunteer
 #  - certificates
 #  - skills
 #  - languages
