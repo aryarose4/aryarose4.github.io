@@ -1,4 +1,4 @@
 User-agent: *
 Disallow:
 
-Sitemap: https://aryarose4.github.io/sitemap.xml
+Sitemap: https://aryayae.com/sitemap.xml
