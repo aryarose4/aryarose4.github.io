@@ -118,7 +118,7 @@
       "organization": "University of Oregon Math Department",
       "position": "Mentor for first-year graduate students",
       "startDate": "2021",
-      "endDate": "Present"
+      "endDate": ""
     },
     {
       "organization": "Boot Camp at the UO Math Department",
@@ -151,7 +151,8 @@
       "organization": "UO Math Graduate Affairs Committee",
       "position": "Student Representative",
       "startDate": "2021",
-      "endDate": "2022"
+      "endDate": "2022",
+      "highlights": ["Attended committee meetings", "Organized events for incoming graduate students", "Handled office assignments and mentorship pairings"]
     },
     {
       "organization": "Social and Professional Enrichment Committee at UO chapter of the Association for Women in Mathematics (AWM)",
