@@ -38,8 +38,8 @@
       "location": "Eugene, Oregon",
       "url": "https://math.uoregon.edu",
       "studyType": "Ph.D. in Mathematics",
-      "highlights": ["Dissertation Title: Degenerations of Hyperkähler Metrics", "Advisor: Laura Fredrickson"],
-      "startDate": "Sep. 2019",
+      "courses": ["Dissertation Title: Degenerations of Hyperkähler Metrics", "Advisor: Laura Fredrickson"],
+      "startDate": "2019-09",
       "endDate": "Present"
     },
     {
@@ -47,21 +47,23 @@
       "location": "Seattle, Washington",
       "url": "https://www.seattleu.edu/science-engineering/academic-departments/department-of-mathematics/",
       "studyType": "B.S. in Mathematics",
-      "highlights": ["Thesis Title: Set Theory and Mathematical Logic", "Advisor: Dylan Helliwell", "Graduated summa cum laude"],
-      "endDate": "June 2019"
+      "courses": ["Thesis Title: Set Theory and Mathematical Logic", "Advisor: Dylan Helliwell", "Graduated summa cum laude"],
+      "startDate": "2017-09",
+      "endDate": "2019-06"
     },
     {
       "institution": "Bellevue College",
       "location": "Bellevue, Washington",
       "url": "https://www.bellevuecollege.edu/",
       "studyType": "Associates in Arts and Science",
-      "endDate": "June 2017"
+      "startDate": "2015-09",
+      "endDate": "2017-06"
     }
   ],
   "awards": [
     {
       "title": "NSF Research and Training Grant (RTG) Fellowship",
-      "date": "2021, 2023, 2024, 2025",
+      "date": "Summer 2024, 2025",
       "awarder": "University of Oregon Mathematics Department"
     },
     {
@@ -72,6 +74,11 @@
     {
       "title": "Anderson Research Award",
       "date": "2023",
+      "awarder": "University of Oregon Mathematics Department"
+    },
+    {
+      "title": "NSF Research and Training Grant (RTG) Fellowship",
+      "date": "Summer 2021, 2023",
       "awarder": "University of Oregon Mathematics Department"
     },
     {
@@ -95,16 +102,17 @@
       "organization": "UO Student Geometry/Topology Seminar",
       "location": "Eugene, Oregon",
       "position": "Organizer",
-      "startDate": "Fall 2025",
+      "startDate": "2025-01",
       "endDate": "Present",
-      "summary": "Organized speakers and managed seminar calendar."
+      "highlights": ["Organized speakers and managed seminar calendar."]
     },
     {
       "organization": "Eugene Math Festival",
       "location": "Eugene, Oregon",
       "position": "Volunteer",
-      "date": "February 2025",
-      "summary": "Led educational booth on curvature for local K-12 students."
+      "startDate": "2025-02",
+      "endDate": "2025-02",
+      "highlights": ["Led educational booth on curvature for local K-12 students."]
     },
     {
       "organization": "University of Oregon Math Department",
@@ -115,25 +123,29 @@
     {
       "organization": "Boot Camp at the UO Math Department",
       "position": "Co-Organizer",
-      "date": "September 2023",
-      "summary": "Led 2-week mathematics orientation for incoming graduate students"
+      "startDate": "2023-09",
+      "endDate": "2023-09",
+      "highlights": ["Led 2-week mathematics orientation for incoming graduate students"]
     },
     {
       "organization": "Directed Reading Program at the UO",
       "position": "Mentor",
-      "date": "2023",
-      "summary": "Worked with an undergraduate student studying axiomatic set theory"
+      "startDate": "2023-01",
+      "endDate": "2023-04",
+      "highlights": ["Worked with an undergraduate student studying axiomatic set theory"]
     },
     {
       "organization": "UO chapter of the American Mathematical Society (AMS)",
       "position": "President",
-      "date": "2023",
+      "startDate": "2022-09",
+      "endDate": "2023-09",
       "highlights": ["Organized events for graduate and undergraduate students","Managed chapter budget with the chapter's treasurer"]
     },
     {
       "organization": "UO chapter of the AMS",
       "position": "Diversity Chair",
-      "date": "2022"
+      "startDate": "2022-09",
+      "endDate": "2023-09"
     },
     {
       "organization": "UO Math Graduate Affairs Committee",
