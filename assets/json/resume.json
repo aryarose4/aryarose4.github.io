@@ -37,7 +37,7 @@
       "location": "Eugene, Oregon",
       "url": "https://math.uoregon.edu",
       "studyType": "Ph.D. in Mathematics",
-      "courses": ["Dissertation Title: Degenerations of Hyperkähler Metrics", "Advisor: Laura Fredrickson"],
+      "courses": ["Dissertation Title: Hyperkähler Degeneration from Parabolic SL(2,C)-Higgs Bundle Moduli Spaces to Hyperpolygon Spaces", "Advisor: Laura Fredrickson"],
       "startDate": "2019-09",
       "endDate": "Present"
     },
@@ -206,8 +206,9 @@
   ],
   "publications": [
     {
-      "name": "Hyperkähler Degeneration of ALG-D_4 Gravitational Instantons",
-      "releaseDate": "2025+ (upcoming)"
+      "name": "Hyperkähler Degeneration from Parabolic SL(2,C)-Higgs Bundle Moduli Spaces on the Punctured Sphere to Hyperpolygon Spaces",
+      "releaseDate": "2026",
+      "url": "https://arxiv.org/abs/2601.10656"
     },
     {
       "name": "Pole Order Reduction via Griffiths Residues on Grassmannians",
