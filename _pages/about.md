@@ -28,6 +28,8 @@ latest_posts:
 ---
 
 I am a Ph.D. student at the University of Oregon Mathematics department.  I study hyperkahler metrics on moduli spaces of Higgs bundles and Nakajima quiver varieties using techniques from geometric invariant theory, Morse theory, and geometric microlocal analysis, with a focus on analyzing degenerating limits of the hyperkahler metrics.  I am also interested in moduli constructions of complete noncompact hyperkahler 4-manifolds called gravitational instantons, as many proposed constructions are currently only conjectural.
+
+I am currently mentoring two undergraduate students in a directed reading program at the University of Oregon.  The project's goal is to simulate Ricci flow on punctured surfaces using numerical techniques.  In suitable situations, the existence of singular uniformization metrics with prescribed cone angles has been established, but to my knowledge these metrics have not been computed explicitly nor numerically.  I will link to our GitHub page once the program is concluded.
 <!--
 Write your biography here. Tell the world about yourself. Link to your favorite [subreddit](http://reddit.com). You can put a picture in, too. The code is already in, just name your picture `prof_pic.jpg` and put it in the `img/` folder.
 Put your address / P.O. box / other info right below your picture. You can also disable any of these elements by editing `profile` property of the YAML header of your `_pages/about.md`. Edit `_bibliography/papers.bib` and Jekyll will render your [publications page](/al-folio/publications/) automatically.
