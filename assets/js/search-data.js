@@ -9,12 +9,26 @@ ninja.data = [{
     handler: () => {
       window.location.href = "/";
     },
-  },{id: "nav-publications",
+  },{id: "nav-projects",
+          title: "Projects",
+          description: "",
+          section: "Navigation",
+          handler: () => {
+            window.location.href = "/projects/";
+          },
+        },{id: "nav-publications",
           title: "Publications",
           description: "publications in reverse chronological order.",
           section: "Navigation",
           handler: () => {
             window.location.href = "/Publications/";
+          },
+        },{id: "nav-talks",
+          title: "Talks",
+          description: "",
+          section: "Navigation",
+          handler: () => {
+            window.location.href = "/talks/";
           },
         },{id: "nav-cv",
           title: "CV",
@@ -45,7 +59,27 @@ ninja.data = [{
             window.open("https://medium.com/@al-folio/displaying-external-posts-on-your-al-folio-blog-b60a1d241a0a?source=rss-17feae71c3c4------2", "_blank");
           
         },
-      },{
+      },{id: "projects-curvature-flow-and-geodesics",
+          title: 'Curvature Flow and Geodesics',
+          description: "",
+          section: "Projects",handler: () => {
+              window.location.href = "/projects/curvature_flow_and_geodesics/";
+            },},{id: "projects-hyperpolygon-moduli-spaces",
+          title: 'Hyperpolygon Moduli Spaces',
+          description: "",
+          section: "Projects",handler: () => {
+              window.location.href = "/projects/hyperpolygon_moduli_spaces/";
+            },},{id: "talks-metric-degenerations-from-alg-to-ale-gravitational-instantons",
+          title: 'Metric Degenerations from ALG to ALE Gravitational Instantons',
+          description: "",
+          section: "Talks",handler: () => {
+              window.location.href = "/talks/ALG_to_ALE_Talk/";
+            },},{id: "talks-star-shaped-quiver-varieties-and-parabolic-higgs-bundle-moduli-spaces",
+          title: 'Star-Shaped Quiver Varieties and Parabolic Higgs Bundle Moduli Spaces',
+          description: "",
+          section: "Talks",handler: () => {
+              window.location.href = "/talks/Star_Shaped_Quivers_Talk/";
+            },},{
         id: 'social-email',
         title: 'email',
         section: 'Socials',
