@@ -187,6 +187,8 @@ exclude:
   - _pages/teaching.md
   - _pages/dropdown.md
   - bin/
+  - mathematica/
+  - dev/
   - CONTRIBUTING.md
   - CUSTOMIZE.md
   - Dockerfile
