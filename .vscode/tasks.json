@@ -16,6 +16,15 @@
       "command": "docker compose down",
       "presentation": { "reveal": "silent", "panel": "dedicated" },
       "problemMatcher": []
+    },
+    {
+      "label": "site: refresh",
+      "type": "shell",
+      "command": "./bin/refresh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
     }
   ]
 }

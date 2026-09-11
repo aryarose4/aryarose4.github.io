@@ -17,7 +17,7 @@ icon: ❄️ # the emoji used as the favicon (alternatively, provide image name 
 
 url: https://aryayae.com # the base hostname & protocol for your site
 baseurl: # the subpath of your site, e.g. /blog/. Leave blank for root
-last_updated: true # set to true if you want to display last updated in the footer
+last_updated: false # set to true if you want to display last updated in the footer
 impressum_path: # set to path to include impressum link in the footer, use the same path as permalink in a page, helps to conform with EU GDPR
 back_to_top: true # set to false to disable the back to top button
 
@@ -148,7 +148,9 @@ collections:
       layout: post
     output: false
   projects:
-    output: false
+    output: true
+  talks:
+    output: true
 
 # -----------------------------------------------------------------------------
 # Jekyll settings
@@ -171,13 +173,15 @@ kramdown:
 include: ["_pages", "_scripts"]
 exclude:
   - _posts/
-  - _projects/
+#  - _projects/
+#  - _talks/
+  - _projects/Templates/
   - _books/
   - _pages/books.md
   - _news/
   - _pages/news.md
   - _pages/profiles.md
-  - _pages/projects.md
+#  - _pages/projects.md
   - _pages/repositories.md
   - _pages/blog.md
   - _pages/teaching.md
