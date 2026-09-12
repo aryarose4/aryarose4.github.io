@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "Stopping Jekyll server..."
+pkill -f "jekyll serve" 2>/dev/null || true
+sleep 1
+
+echo "Cleaning build caches..."
+rm -rf .jekyll-cache _site
+
+echo "Building site..."
+bundle exec jekyll build
+
+echo "Starting server on :8080..."
+nohup bundle exec jekyll serve --livereload --incremental --host 0.0.0.0 --port 8080 >/tmp/kilo/jekyll-refresh.log 2>&1 &
+disown
+
+for i in $(seq 1 60); do
+  if curl -sf -o /dev/null "http://localhost:8080/"; then
+    echo "Done. http://localhost:8080"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Server did not become ready in time; see /tmp/kilo/jekyll-refresh.log" >&2
+exit 1

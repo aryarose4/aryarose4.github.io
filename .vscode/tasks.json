@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "site: up",
+      "type": "shell",
+      "command": "docker compose up -d",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "silent", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "site: down",
+      "type": "shell",
+      "command": "docker compose down",
+      "presentation": { "reveal": "silent", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "site: refresh",
+      "type": "shell",
+      "command": "./bin/refresh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    }
+  ]
+}
