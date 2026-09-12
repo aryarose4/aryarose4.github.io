@@ -372,8 +372,9 @@ function solveReal3(J, rhs) {
 // Stable fallback (port of MakeHyperpolygonStable): cyclic one-parameter
 // minimization; other parameters are reset to their initial values each
 // pass, and A's a22 entry enters linearly (not squared), as in the notebook.
-function stablePath(x0, y0, beta, tolerance) {
-  const p0 = [0, 0, 1];
+// start = initial (a12, b12, a22); the notebook uses [0, 0, 1].
+function stablePath(x0, y0, beta, tolerance, start = [0, 0, 1]) {
+  const p0 = start.slice();
   const searchMin = [-1, -1, 0.01];
   const searchMax = [1, 1, 2];
   const G = (p) => {
@@ -460,49 +461,92 @@ function minimize1D(g, lo, hi) {
 
 const TOLERANCE = 1e-3;
 
-// Main entry: (r, theta, t, beta) -> {x, y, vertices, sl2, accuracy}
-export function makeHyperpolygon(r, theta, t, beta) {
+// swap quiver legs 2 and 3 (columns 2/3 of x, rows 2/3 of y); fresh copies
+function swapLegs23(x, y) {
+  const xs = [
+    [x[0][0], x[0][1], x[0][3], x[0][2]],
+    [x[1][0], x[1][1], x[1][3], x[1][2]],
+  ];
+  const ys = [y[0].slice(), y[1].slice(), y[3].slice(), y[2].slice()];
+  return [xs, ys];
+}
+
+// Main entry: (r, theta, t, beta, permute) -> {x, y, vertices, sl2, accuracy}
+// permute = true (default) swaps quiver legs 2 and 3 in the returned (x, y)
+// and builds the display polygons from the swapped pair; this re-orders the
+// polygon's traversal (the chord v0 -> v4 and the closure are unchanged
+// since they depend only on the leg sum). accuracy always describes the
+// solved (unpermuted) representative, which solves the moment map equations
+// for the given beta; the permuted pair does too only when beta2 = beta3.
+export function makeHyperpolygon(r, theta, t, beta, permute = true) {
   const reff = Math.min(r, 1 - 1e-5);
   const ySolveX = buildX(reff, theta, beta[0]);
   const y0 = solveY(ySolveX, reff, t);
   const x0 = buildX(r, theta, beta[0]);
 
   const F = makeFastResidual(x0, y0, beta);
-  const nrm = newton(F, [0, 0, 1]);
-  let pair;
-  if (nrm.residual <= TOLERANCE) {
+  const su2Norm = (p) => {
+    const s = muSU2Coords(p[0], p[1]);
+    return Math.hypot(s[0], s[1], s[2]);
+  };
+  const newtonPair = (p0) => {
+    const nrm = newton(F, p0);
+    if (nrm.residual > TOLERANCE) return null;
     const A = [
       [C(1), [nrm.p[0], nrm.p[1]]],
       [C(0), C(nrm.p[2] * nrm.p[2])],
     ];
     const [xa, ya] = actCentral(A, x0, y0);
-    pair = fixMuU1(xa, ya, beta);
+    return fixMuU1(xa, ya, beta);
+  };
+  let pair = newtonPair([0, 0, 1]);
+  const usedStable = pair === null;
+  if (pair !== null) {
     // if Newton stalled above the tight threshold, also try the stable
     // fallback and keep the more accurate result
-    const probe = muSU2Coords(pair[0], pair[1]);
-    if (Math.hypot(probe[0], probe[1], probe[2]) > 1e-8) {
+    if (su2Norm(pair) > 1e-8) {
       const alt = stablePath(x0, y0, beta, TOLERANCE);
-      const altSU2 = muSU2Coords(alt[0], alt[1]);
-      if (Math.hypot(altSU2[0], altSU2[1], altSU2[2]) < Math.hypot(probe[0], probe[1], probe[2])) {
+      if (su2Norm(alt) < su2Norm(pair)) {
         pair = alt;
       }
     }
   } else {
     pair = stablePath(x0, y0, beta, TOLERANCE);
   }
+  // rescue: for rare parameter points both Newton and the cyclic fallback
+  // land in a local minimum (observed near t = 0 for lopsided in-chamber
+  // betas, residual ~1e-1). Retry from varied starts and keep the best
+  // representative; convergent solves never enter this branch.
+  if (su2Norm(pair) > 1e-6) {
+    const altStarts = [[0, 0, 2], [0.7, 0.7, 1], [-0.7, -0.7, 1]];
+    for (const p0 of altStarts) {
+      const cand = newtonPair(p0);
+      if (cand !== null && su2Norm(cand) < su2Norm(pair)) {
+        pair = cand;
+      }
+    }
+    const altStable = [[0.7, -0.7, 1], [0, 0, 0.25]];
+    for (const p0 of altStable) {
+      const cand = stablePath(x0, y0, beta, TOLERANCE, p0);
+      if (su2Norm(cand) < su2Norm(pair)) {
+        pair = cand;
+      }
+    }
+  }
 
   const [xf, yf] = pair;
   const su2 = muSU2Coords(xf, yf);
+  const [xd, yd] = permute ? swapLegs23(xf, yf) : [xf, yf];
   return {
-    x: xf,
-    y: yf,
-    vertices: hyperpolygonVertices(xf, yf),
-    sl2: sl2Vertices(xf, yf),
+    x: xd,
+    y: yd,
+    vertices: hyperpolygonVertices(xd, yd),
+    sl2: sl2Vertices(xd, yd),
     accuracy: {
       su2Norm: Math.hypot(su2[0], su2[1], su2[2]),
       muU1Error: muU1Error(xf, yf, beta),
       muCNorm: Math.max(...muC(xf, yf).map(cAbs2)) ** 0.5,
-      usedStable: nrm.residual > TOLERANCE,
+      usedStable: usedStable,
     },
   };
 }

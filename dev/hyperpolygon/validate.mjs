@@ -160,7 +160,8 @@ for (const tgt of targets) {
   const { x: fileX, y: fileY } = flatToXY(flat);
 
   const t0 = Date.now();
-  const res = makeHyperpolygon(tgt.r, tgt.th, tgt.t, BETA);
+  // permute=false: the notebook data uses the unpermuted leg convention
+  const res = makeHyperpolygon(tgt.r, tgt.th, tgt.t, BETA, false);
   const ms = Date.now() - t0;
 
   const fileSU2 = muSU2Coords(fileX, fileY);

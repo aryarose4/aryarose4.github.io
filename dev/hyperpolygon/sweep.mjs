@@ -33,7 +33,10 @@ for (const { beta, label } of betaSets) {
     const th = -Math.PI + 2 * Math.PI * rand();
     const t = 0.99 * rand();
     const t0 = Date.now();
-    const res = makeHyperpolygon(r, th, t, beta);
+    // permute=false: residuals must vanish for the solved representative
+    // even when beta2 != beta3 (the permuted pair only solves mu_U1 = beta
+    // when beta2 = beta3)
+    const res = makeHyperpolygon(r, th, t, beta, false);
     const ms = Date.now() - t0;
     worstMs = Math.max(worstMs, ms);
     const su2 = muSU2Coords(res.x, res.y);
@@ -58,7 +61,7 @@ for (const th of [-Math.PI, -1.0, 0.0, 0.7, Math.PI]) {
   for (const t of [0.0, 0.5, 0.95]) {
     const beta = betaSets[0].beta;
     const t0 = Date.now();
-    const res = makeHyperpolygon(1.0, th, t, beta);
+    const res = makeHyperpolygon(1.0, th, t, beta, false);
     const ms = Date.now() - t0;
     const su2 = muSU2Coords(res.x, res.y);
     console.log(
