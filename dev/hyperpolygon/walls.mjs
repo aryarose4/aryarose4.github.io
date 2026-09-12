@@ -565,9 +565,9 @@ console.log("[E] widget call-pattern equivalence (solve beta=[b0,b1,b3,b2], perm
 
 // ---------------------------------------------------------------------------
 // [F] defaults sanity (the chamber the widget locks at load)
-console.log("[F] defaults sanity (beta = (1/6, 1/7, 1/7, 1/10))");
+console.log("[F] defaults sanity (beta = (0.5, 0.5, 0.5, 0.25))");
 {
-  const beta = [1 / 6, 1 / 7, 1 / 7, 1 / 10];
+  const beta = [0.5, 0.5, 0.5, 0.25];
   for (let i = 0; i < 4; i++) {
     const iv = betaInterval(i, beta);
     if (!(iv.lo < beta[i] && beta[i] < iv.hi))
@@ -628,7 +628,7 @@ console.log("[F] defaults sanity (beta = (1/6, 1/7, 1/7, 1/10))");
 // nonempty exactly when the tuple sits on a wall.
 console.log("[G] drag events via applyBetaDrag (chamber locked to the default chamber)");
 {
-  const START = [1 / 6, 1 / 7, 1 / 7, 1 / 10];
+  const START = [0.5, 0.5, 0.5, 0.25];
   const shorts = shortSubsets(START);
   const minSlack = (beta) => {
     let m = Infinity;
@@ -759,13 +759,13 @@ console.log("[G] drag events via applyBetaDrag (chamber locked to the default ch
 // contact release, 0-wall floor, bracket agreement, fuzz walks.
 console.log("[H] chamber lock focused checks (applyBetaDrag + chamberInterval)");
 {
-  const DEF = [1 / 6, 1 / 7, 1 / 7, 1 / 10];
+  const DEF = [0.5, 0.5, 0.5, 0.25];
   const shorts = shortSubsets(DEF);
   const eqSubsets = (A, B) =>
     A.length === B.length &&
     A.every((I, k) => I.length === B[k].length && I.every((v, m) => v === B[k][m]));
   // (a) upper-wall pin on slider 0: the {0,3}|{1,2} pair wall at
-  // b0 = b1+b2-b3 ≈ 0.1857. The pinned value must equal the bound
+  // b0 = b1+b2-b3 = 0.75. The pinned value must equal the bound
   // bit-exactly, no other leg may move, and the breaking inequality must
   // be exactly the short side {0,3} of that split.
   {
@@ -787,8 +787,8 @@ console.log("[H] chamber lock focused checks (applyBetaDrag + chamberInterval)")
     if (!eqSubsets(breakingSubsets(beta, shorts), [[0, 3]]))
       fail(`[H](a) breaking=${JSON.stringify(breakingSubsets(beta, shorts))}, expected [[0,3]]`);
     // (a2) lower-wall pin on slider 0: the {1,3}|{0,2} pair wall at
-    // b0 = b1+b3-b2 = 0.1. Because beta1 = beta2 exactly (both 1/7), the
-    // {2,3}|{0,1} wall COINCIDES with it (both bounds evaluate to 0.1), so
+    // b0 = b1+b3-b2 = 0.25. Because beta1 = beta2 exactly (both 0.5), the
+    // {2,3}|{0,1} wall COINCIDES with it (both bounds evaluate to 0.25), so
     // pinning there breaks two inequalities at once — a codim-2 pinch.
     const beta2 = DEF.slice();
     if (applyBetaDrag(0, beta2, iv0.lo - 0.02, shorts) !== true)
@@ -803,25 +803,30 @@ console.log("[H] chamber lock focused checks (applyBetaDrag + chamberInterval)")
   // {0,3} wall, dragging beta[1] DOWN clamps at the SAME wall (the tuple
   // slides along it); dragging beta[1] UP releases that wall's contact and
   // pins at the next chamber wall ({1,3}); an inward in-span drag then
-  // leaves wall contact entirely
+  // leaves wall contact entirely. Targets are derived from the live
+  // chamberInterval so the choreography is default-independent.
   {
     const beta = DEF.slice();
     const iv0 = chamberInterval(0, beta, shorts);
     applyBetaDrag(0, beta, iv0.hi + 0.02, shorts);
-    if (applyBetaDrag(1, beta, 0.05, shorts) !== true)
+    const iv1 = chamberInterval(1, beta, shorts);
+    if (applyBetaDrag(1, beta, iv1.lo - 0.1, shorts) !== true)
       fail("[H](b) downward cross-drag not clamped");
     const expected = beta[0] + beta[3] - beta[2];
     if (!(Math.abs(beta[1] - expected) <= 1e-12))
       fail(`[H](b) beta[1]=${beta[1]} not slid onto the {0,3} wall (expected ${expected})`);
     if (!(wallDist(beta) <= 1e-12)) fail(`[H](b) off wall after slide-along: ${fmtBeta(beta)}`);
-    if (applyBetaDrag(1, beta, 0.3, shorts) !== true)
+    if (applyBetaDrag(1, beta, iv1.hi + 0.02, shorts) !== true)
       fail("[H](b2) upward cross-drag not clamped");
+    if (!(Math.abs(beta[1] - iv1.hi) <= 1e-12))
+      fail(`[H](b2) beta[1]=${beta[1]} not pinned at the {1,3} wall ${iv1.hi}`);
     if (!(wallDist(beta) <= 1e-12)) fail(`[H](b2) off wall after upward cross-drag: ${fmtBeta(beta)}`);
     if (!eqSubsets(breakingSubsets(beta, shorts), [[1, 3]]))
       fail(`[H](b2) breaking=${JSON.stringify(breakingSubsets(beta, shorts))}, expected [[1,3]]`);
-    if (applyBetaDrag(1, beta, 0.2, shorts) !== false)
+    const mid = (iv1.lo + iv1.hi) / 2;
+    if (applyBetaDrag(1, beta, mid, shorts) !== false)
       fail("[H](c) in-span drag reported as clamped");
-    if (beta[1] !== 0.2) fail(`[H](c) beta[1]=${beta[1]} != raw 0.2`);
+    if (beta[1] !== mid) fail(`[H](c) beta[1]=${beta[1]} != raw ${mid}`);
     if (breakingSubsets(beta, shorts).length !== 0)
       fail(`[H](c) wall contact not released: ${JSON.stringify(breakingSubsets(beta, shorts))}`);
   }
@@ -968,6 +973,385 @@ console.log("[H] chamber lock focused checks (applyBetaDrag + chamberInterval)")
     console.log(
       `  [H](f) 60 fuzz walks x 40 events (chamber locked): ${events} events, min chamber slack=${minSlack === Infinity ? "n/a" : minSlack.toExponential(2)}; end-of-walk solves: ${cleanEnds} strictly in-chamber clean, ${pinnedFinals} pinned on-wall (worst su2=${worstPinnedSU2.toExponential(2)} at t=0.5)`
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// [S] scale buttons (uniform beta scaling): chambers are scale-invariant —
+// the wall inequalities are homogeneous in beta, so x0.25 / x-min(4, 1/max)
+// scaling never crosses a wall. Mirrors widget.js: down is fp-exact (0.25 is
+// a power of two); up clamps the factor to 1/max and pins the largest weight
+// exactly on 1 (x*(1/x) can land 1 ulp off). Grey-out rules: up disabled when
+// max(beta) >= 1-1e-12; down when the post-scale max would drop below 0.02 —
+// the floor protects the chamber-interval DISPLAY, whose allowed spans
+// collapse against chamberInterval's hard WALL_MARGIN 0-wall floor once the
+// tuple scale approaches ~2*WALL_MARGIN (the solver itself is scale-robust
+// far below that).
+console.log("[S] scale buttons (uniform scaling never leaves the chamber)");
+{
+  const DEF = [0.5, 0.5, 0.5, 0.25];
+  const SCALE_DOWN_MIN = 0.02; // widget.js constant
+  const shorts = shortSubsets(DEF);
+  const mx = (b) => Math.max(...b);
+  const minSpan = (b) => {
+    let m = Infinity;
+    for (let i = 0; i < 4; i++) {
+      const iv = chamberInterval(i, b, shorts);
+      if (iv.hi - iv.lo < m) m = iv.hi - iv.lo;
+    }
+    return m;
+  };
+  const chamberHolds = (b) => {
+    for (let i = 0; i < 4; i++) {
+      const iv = chamberInterval(i, b, shorts);
+      if (b[i] < iv.lo - 1e-12 || b[i] > iv.hi + 1e-12) return false;
+    }
+    return true;
+  };
+  const upDisabled = (b) => mx(b) >= 1 - 1e-12;
+  const downDisabled = (b) => mx(b) * 0.25 < SCALE_DOWN_MIN;
+
+  // (a) down-clicks from the defaults: bit-exact x0.25, chamber holds,
+  // on-wall state unchanged, spans healthy while enabled; from the defaults
+  // exactly 2 clicks are possible (max 0.5 -> 0.125 -> 0.03125; the third
+  // would land at max 0.0078 < 0.02) and the deepest tuple keeps wide spans
+  let beta = DEF.slice();
+  let clicks = 0;
+  for (let step = 1; step <= 5; step++) {
+    if (downDisabled(beta)) break;
+    const old = beta.slice();
+    for (let i = 0; i < 4; i++) beta[i] *= 0.25;
+    clicks++;
+    for (let i = 0; i < 4; i++)
+      if (!(beta[i] === old[i] * 0.25)) fail(`[S](a) scaling not bit-exact at click ${step}`);
+    if (!chamberHolds(beta)) fail(`[S](a) scaled tuple left the chamber: ${fmtBeta(beta)}`);
+    if (breakingSubsets(beta, shorts).length !== 0)
+      fail(`[S](a) on-wall state appeared under scaling: ${fmtBeta(beta)}`);
+  }
+  if (clicks !== 2)
+    fail(`[S](a) expected exactly 2 down-clicks from the defaults before the floor, got ${clicks}`);
+  if (!(minSpan(beta) >= 2 * WALL_MARGIN))
+    fail(`[S](a) allowed spans collapsed at the deepest tuple ${fmtBeta(beta)}: min span ${minSpan(beta).toExponential(2)}`);
+  console.log(`  [S](a) down x${clicks}: ${fmtBeta(beta)}, disabled=${downDisabled(beta)}, min allowed span=${minSpan(beta).toExponential(2)}`);
+
+  // (b) up from the defaults: factor min(4, 1/0.5) = 2 -> (1,1,1,0.5) with
+  // the largest weight exactly 1 and the button disabled afterwards
+  {
+    const b = DEF.slice();
+    const f = Math.min(4, 1 / mx(b));
+    const arg = b.indexOf(mx(b));
+    for (let i = 0; i < 4; i++) b[i] *= f;
+    b[arg] = 1; // x*(1/x) can land 1 ulp off; the widget pins it exactly
+    if (b[arg] !== 1) fail(`[S](b) clamped max is ${b[arg]}, expected exactly 1`);
+    if (b.some((v) => v > 1)) fail(`[S](b) a beta exceeded 1: ${fmtBeta(b)}`);
+    if (!chamberHolds(b)) fail(`[S](b) scaled-up tuple left the chamber: ${fmtBeta(b)}`);
+    if (breakingSubsets(b, shorts).length !== 0)
+      fail(`[S](b) on-wall state appeared under scaling: ${fmtBeta(b)}`);
+    if (!upDisabled(b)) fail("[S](b) scale-up must be disabled at max 1");
+    if (JSON.stringify(b) !== JSON.stringify([1, 1, 1, 0.5]))
+      fail(`[S](b) expected [1,1,1,0.5], got ${fmtBeta(b)}`);
+    console.log(`  [S](b) up x${f}: ${fmtBeta(b)}, max exactly 1, disabled=${upDisabled(b)}`);
+  }
+
+  // (b2) up with the full factor 4 (1/max > 4): nothing clamped
+  {
+    const b = [0.1, 0.1, 0.1, 0.05];
+    const f = Math.min(4, 1 / mx(b));
+    if (f !== 4) fail(`[S](b2) expected the full factor 4, got ${f}`);
+    const scaled = b.map((v) => v * f);
+    if (scaled.some((v) => v > 1)) fail(`[S](b2) factor-4 scale exceeded 1: ${fmtBeta(scaled)}`);
+    if (!chamberHolds(scaled)) fail(`[S](b2) factor-4 scale left the chamber: ${fmtBeta(scaled)}`);
+  }
+
+  // (b3) up from a tuple whose max is NOT a power of two: the pin still
+  // lands the largest weight exactly on 1; the tuple's OWN chamber is
+  // scale-invariant, so the pinned tuple must sit inside
+  // shortSubsets(testTuple) (NOT the defaults' chamber — this tuple lives
+  // in a different one)
+  {
+    const b = [0.3, 0.2, 0.15, 0.1];
+    const shortsB = shortSubsets(b);
+    const f = Math.min(4, 1 / mx(b));
+    const scaled = b.map((v) => v * f);
+    const arg = b.indexOf(mx(b));
+    scaled[arg] = 1;
+    if (scaled[arg] !== 1) fail("[S](b3) exact-1 pin failed");
+    let ok = true;
+    for (let i = 0; i < 4; i++) {
+      const iv = chamberInterval(i, scaled, shortsB);
+      if (scaled[i] < iv.lo - 1e-12 || scaled[i] > iv.hi + 1e-12) ok = false;
+    }
+    if (!ok) fail(`[S](b3) pinned scale left its own chamber: ${fmtBeta(scaled)}`);
+    if (breakingSubsets(scaled, shortsB).length !== 0)
+      fail(`[S](b3) on-wall state appeared under scaling: ${fmtBeta(scaled)}`);
+  }
+
+  // (c) grey-out rule spot checks
+  if (!upDisabled([1, 0.4, 0.3, 0.3])) fail("[S](c) scale-up must be disabled when a beta equals 1");
+  if (!upDisabled([0.999999999999, 0.4, 0.3, 0.3])) fail("[S](c) scale-up must be disabled near 1");
+  if (upDisabled([0.9, 0.4, 0.3, 0.3])) fail("[S](c) scale-up must be enabled below max 1");
+  if (!downDisabled([0.0799999, 0.05, 0.05, 0.02]))
+    fail("[S](c) scale-down must be disabled below the 0.02 floor");
+  if (downDisabled([0.0800001, 0.05, 0.05, 0.02]))
+    fail("[S](c) scale-down must be enabled above the 0.02 floor");
+
+  // (d) solve health at uniformly scaled tuples (widget-exact swapped call)
+  for (const f of [1, 0.25, 0.0625, 0.015625, 1e-3, 1e-6]) {
+    const b = DEF.map((v) => v * f);
+    const res = solveSafe(0.5, 0, 0.5, [b[0], b[1], b[3], b[2]], true);
+    if (res.error) {
+      fail(`[S](d) solve threw at f=${f}: ${res.error}`);
+      continue;
+    }
+    const su2 = su2NormOf(res.x, res.y);
+    const u1 = muU1Error(res.x, res.y, b);
+    if (!(su2 <= 1e-9 && u1 <= 1e-9))
+      fail(`[S](d) scaled-beta solve dirty at f=${f}: su2=${su2.toExponential(2)} muU1=${u1.toExponential(2)}`);
+  }
+  console.log("  [S](d) scaled-beta solves clean down to f=1e-6 (widget-exact call)");
+}
+
+// ---------------------------------------------------------------------------
+// [W] cross-wall flop (the widget's "Cross Wall" button): flopping split k
+// replaces shorts[k] by its complement (the adjacent chamber across that
+// wall) and nudges beta across the wall into the new chamber. Mirrors
+// widget.js (nudgeAcross: grow the old short subset's legs by eps = 5% of
+// max(beta), bounded by the slider max 1; fall back to shrinking the
+// complement legs; halve eps while the candidate leaves the new chamber;
+// skip only in pinched corners). KNOWN, accepted per user instruction: after
+// crossing into a dominant chamber, small-t solves degrade — not asserted.
+console.log("[W] cross-wall flop (chamber move + nudge + drag clamping)");
+{
+  function complementOf(I) {
+    const comp = [];
+    for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) comp.push(n);
+    return comp;
+  }
+  function inChamber(t, sh) {
+    for (let i = 0; i < 4; i++) {
+      const iv = chamberInterval(i, t, sh);
+      if (t[i] < iv.lo - 1e-12 || t[i] > iv.hi + 1e-12) return false;
+    }
+    return true;
+  }
+  // mirror of widget.js nudgeAcross (sequential fill: the first leg with
+  // room takes the eps — uniform growth of all legs of I would slide along
+  // a coincident pair wall and keep it breaking)
+  function nudgeAcross(beta, I, comp, sh) {
+    let eps = 0.05 * Math.max(beta[0], beta[1], beta[2], beta[3]);
+    for (let attempt = 0; attempt < 8 && eps > 1e-9; attempt++) {
+      const up = beta.slice();
+      let remaining = eps;
+      for (let m = 0; m < I.length && remaining > 0; m++) {
+        const n = I[m];
+        const d = Math.min(remaining, Math.max(1 - up[n], 0));
+        up[n] += d;
+        remaining -= d;
+      }
+      if (remaining < eps) {
+        let sI = 0;
+        let sC = 0;
+        for (let m = 0; m < I.length; m++) sI += up[I[m]];
+        for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) sC += up[n];
+        if (sI - sC > 1e-12 && inChamber(up, sh)) {
+          for (let i = 0; i < 4; i++) beta[i] = up[i];
+          return true;
+        }
+      }
+      const down = beta.slice();
+      remaining = eps;
+      for (let m = 0; m < comp.length && remaining > 0; m++) {
+        const n = comp[m];
+        const d = Math.min(remaining, Math.max(down[n], 0));
+        down[n] -= d;
+        remaining -= d;
+      }
+      if (remaining < eps) {
+        let sI = 0;
+        let sC = 0;
+        for (let m = 0; m < I.length; m++) sI += down[I[m]];
+        for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) sC += down[n];
+        if (sI - sC > 1e-12 && inChamber(down, sh)) {
+          for (let i = 0; i < 4; i++) beta[i] = down[i];
+          return true;
+        }
+      }
+      eps *= 0.5;
+    }
+    return false;
+  }
+  // mirror of widget.js crossWall (fresh shorts array, slot k flopped)
+  function crossWall(state, k) {
+    const I = state.shorts[k];
+    const shorts = state.shorts.slice();
+    shorts[k] = complementOf(I);
+    state.shorts = shorts;
+    state.nudged = nudgeAcross(state.beta, I, complementOf(I), shorts);
+    return I;
+  }
+  const sumsOf = (b, I) => I.reduce((s, n) => s + b[n], 0);
+  const restOf = (b, I) => {
+    let s = 0;
+    for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) s += b[n];
+    return s;
+  };
+  const SHORTS0 = [[], [0], [1], [2], [3], [2, 3], [1, 3], [0, 3]];
+
+  // (a) flop semantics: exactly one slot flips to its sorted complement
+  {
+    const st = { beta: [0.25, 0.5, 0.5, 0.25], shorts: SHORTS0.slice() };
+    const oldI = crossWall(st, 5);
+    if (JSON.stringify(oldI) !== JSON.stringify([2, 3]))
+      fail(`[W](a) wrong flopped subset: ${JSON.stringify(oldI)}`);
+    if (JSON.stringify(st.shorts[5]) !== JSON.stringify([0, 1]))
+      fail(`[W](a) complement wrong: ${JSON.stringify(st.shorts[5])}`);
+    const expect = [[], [0], [1], [2], [3], [0, 1], [1, 3], [0, 3]];
+    if (JSON.stringify(st.shorts) !== JSON.stringify(expect))
+      fail(`[W](a) flop changed other slots: ${JSON.stringify(st.shorts)}`);
+  }
+
+  // (b) defaults pinned at the b0=0.25 wall (the coincident {2,3}|{0,1} and
+  // {1,3}|{0,2} pair walls break together): cross slot 5 -> chamber flops,
+  // the nudge crosses the wall, BOTH coincident walls release, and the
+  // tuple stays inside the new chamber
+  {
+    const st = { beta: [0.5, 0.5, 0.5, 0.25], shorts: SHORTS0.slice() };
+    applyBetaDrag(0, st.beta, 0.24, st.shorts); // pins at the lo wall 0.25
+    if (!(Math.abs(st.beta[0] - 0.25) <= 1e-12))
+      fail(`[W](b) wall pin failed: ${fmtBeta(st.beta)}`);
+    const breaking = breakingSubsets(st.beta, st.shorts);
+    if (breaking.length !== 2)
+      fail(`[W](b) expected 2 coincident breaking inequalities, got ${JSON.stringify(breaking)}`);
+    const oldI = crossWall(st, 5);
+    if (JSON.stringify(oldI) !== JSON.stringify([2, 3]))
+      fail(`[W](b) wrong flopped subset: ${JSON.stringify(oldI)}`);
+    if (!(restOf(st.beta, [2, 3]) < sumsOf(st.beta, [2, 3])))
+      fail(`[W](b) flop did not flip the split: ${fmtBeta(st.beta)}`);
+    if (!inChamber(st.beta, st.shorts))
+      fail(`[W](b) nudged tuple outside the new chamber: ${fmtBeta(st.beta)}`);
+    if (st.beta.some((v) => v < 0 || v > 1))
+      fail(`[W](b) nudge left the slider bounds: ${fmtBeta(st.beta)}`);
+    if (breakingSubsets(st.beta, st.shorts).length !== 0)
+      fail(`[W](b) walls still breaking after the cross: ${JSON.stringify(breakingSubsets(st.beta, st.shorts))}`);
+    // moderate-t solve from the crossed state (still a non-dominant
+    // chamber). theta=0 is the documented stall basin for isolated
+    // near-wall tuples (pre-existing; walls.mjs [H](f) mitigation), so
+    // this takes the best of 3 theta draws like the other batteries.
+    let best = null;
+    let bestTh = 0;
+    for (const th of [0, 0.35, 0.9]) {
+      const res = solveSafe(0.5, th, 0.5, [st.beta[0], st.beta[1], st.beta[3], st.beta[2]], true);
+      if (res.error) {
+        fail(`[W](b) solve threw after the cross: ${res.error}`);
+        continue;
+      }
+      const su2 = su2NormOf(res.x, res.y);
+      if (!best || su2 < best.su2) best = { su2, res };
+      if (best.su2 <= 1e-9) break;
+    }
+    if (best) {
+      if (!(best.su2 <= 1e-9))
+        fail(`[W](b) post-cross solve degraded: su2=${best.su2.toExponential(2)} beta=${fmtBeta(st.beta)}`);
+      console.log(`  [W](b) cross {2,3}: ${fmtBeta(st.beta)} nudged=${st.nudged}, solve su2=${best.su2.toExponential(2)} (best of th {0, 0.35, 0.9})`);
+    }
+
+    // (c) post-cross drags clamp into the NEW chamber: the crossed wall's
+    // other side is interior now, the new chamber's own walls block, the
+    // pinned value is a fixed point, and an inward drag releases contact
+    {
+      const sh = st.shorts;
+      const iv0 = chamberInterval(0, st.beta, sh);
+      if (!(iv0.lo < iv0.hi)) fail(`[W](c) degenerate new-chamber interval: ${JSON.stringify(iv0)}`);
+      if (applyBetaDrag(0, st.beta, iv0.hi + 0.05, sh) !== true)
+        fail("[W](c) upward drag past the new wall not clamped");
+      if (!(Math.abs(st.beta[0] - iv0.hi) <= 1e-12))
+        fail(`[W](c) beta0=${st.beta[0]} not pinned at the new-chamber bound ${iv0.hi}`);
+      const pinned = st.beta[0];
+      applyBetaDrag(0, st.beta, iv0.hi + 0.05, sh); // re-apply: exact no-op
+      if (st.beta[0] !== pinned) fail("[W](c) re-apply at the wall moved the tuple");
+      const mid = 0.5 * (iv0.lo + iv0.hi);
+      if (applyBetaDrag(0, st.beta, mid, sh) !== false)
+        fail("[W](c) in-span drag reported as clamped");
+      if (breakingSubsets(st.beta, sh).length !== 0)
+        fail("[W](c) wall contact not released after the inward drag");
+      if (!inChamber(st.beta, sh)) fail("[W](c) tuple left the new chamber during drags");
+    }
+
+    // (d) cross back: drag onto the flopped wall, flop slot 5 again, the
+    // chamber restores to the original short-subset list
+    {
+      const iv0 = chamberInterval(0, st.beta, st.shorts);
+      applyBetaDrag(0, st.beta, iv0.hi + 0.05, st.shorts); // pin on the flopped wall
+      const oldI = crossWall(st, 5);
+      if (JSON.stringify(oldI) !== JSON.stringify([0, 1]))
+        fail(`[W](d) cross-back flopped the wrong subset: ${JSON.stringify(oldI)}`);
+      if (JSON.stringify(st.shorts) !== JSON.stringify(SHORTS0))
+        fail(`[W](d) cross-back did not restore the chamber: ${JSON.stringify(st.shorts)}`);
+      if (!inChamber(st.beta, st.shorts))
+        fail(`[W](d) cross-back tuple outside the restored chamber: ${fmtBeta(st.beta)}`);
+      console.log(`  [W](d) cross back: ${fmtBeta(st.beta)}, chamber restored`);
+    }
+  }
+
+  // (e) dominant crossing: the {0,3}|{1,2} pair wall crossed into the
+  // dominant side; the moderate-t solve stays healthy (the small-t
+  // degradation of dominant chambers is the accepted known issue) and
+  // deeper dominant-side drags are now allowed
+  {
+    const st = { beta: [0.5, 0.5, 0.5, 0.25], shorts: SHORTS0.slice() };
+    applyBetaDrag(0, st.beta, 0.76, st.shorts); // pins at the hi wall 0.75
+    const b = breakingSubsets(st.beta, st.shorts);
+    if (JSON.stringify(b) !== JSON.stringify([[0, 3]]))
+      fail(`[W](e) expected breaking [[0,3]] at the upper wall, got ${JSON.stringify(b)}`);
+    const slot = st.shorts.findIndex((I) => I.length === 2 && I[0] === 0 && I[1] === 3);
+    if (slot === -1) fail("[W](e) {0,3} slot not found");
+    crossWall(st, slot);
+    if (JSON.stringify(st.shorts[slot]) !== JSON.stringify([1, 2]))
+      fail("[W](e) flop complement wrong");
+    if (!(st.beta[0] + st.beta[3] > st.beta[1] + st.beta[2]))
+      fail(`[W](e) split not flipped: ${fmtBeta(st.beta)}`);
+    if (!inChamber(st.beta, st.shorts))
+      fail(`[W](e) nudged tuple outside the dominant chamber: ${fmtBeta(st.beta)}`);
+    // dragging deeper into the dominant chamber is now allowed
+    if (applyBetaDrag(0, st.beta, 1, st.shorts) !== false)
+      fail("[W](e) dominant-side drag reported as clamped");
+    if (st.beta[0] !== 1) fail(`[W](e) beta0=${st.beta[0]} != raw 1`);
+    // the moderate-t solve in the dominant chamber: best of 3 theta draws
+    // (same theta=0 stall-basin convention as [W](b))
+    let best = null;
+    for (const th of [0, 0.35, 0.9]) {
+      const res = solveSafe(0.5, th, 0.5, [st.beta[0], st.beta[1], st.beta[3], st.beta[2]], true);
+      if (res.error) {
+        fail(`[W](e) solve threw in the dominant chamber: ${res.error}`);
+        continue;
+      }
+      const su2 = su2NormOf(res.x, res.y);
+      if (!best || su2 < best.su2) best = { su2 };
+      if (best.su2 <= 1e-6) break;
+    }
+    if (best) {
+      if (!(best.su2 <= 1e-6))
+        fail(`[W](e) dominant-chamber moderate-t solve degraded: su2=${best.su2.toExponential(2)}`);
+      console.log(`  [W](e) cross {0,3} dominant: ${fmtBeta(st.beta)}, solve su2=${best.su2.toExponential(2)} (best of th {0, 0.35, 0.9})`);
+    }
+  }
+
+  // (f) nudge fallback: the old short side is {0} with beta0 already at the
+  // slider max (no room to grow) — the complement legs shrink instead
+  {
+    const st = { beta: [1, 0.4, 0.3, 0.3], shorts: [[], [0], [1], [2], [3], [2, 3], [1, 3], [1, 2]] };
+    if (wallDist(st.beta) > 1e-9)
+      fail(`[W](f) test tuple not on the {0} wall: ${fmtBeta(st.beta)}`);
+    crossWall(st, 1);
+    if (JSON.stringify(st.shorts[1]) !== JSON.stringify([1, 2, 3]))
+      fail("[W](f) flop complement wrong");
+    if (!(sumsOf(st.beta, [1, 2, 3]) < sumsOf(st.beta, [0])))
+      fail(`[W](f) complement-shrink nudge did not flip the split: ${fmtBeta(st.beta)}`);
+    if (!inChamber(st.beta, st.shorts))
+      fail(`[W](f) nudged tuple outside the new chamber: ${fmtBeta(st.beta)}`);
+    if (st.beta.some((v) => v < 0 || v > 1))
+      fail(`[W](f) nudge left the slider bounds: ${fmtBeta(st.beta)}`);
+    console.log(`  [W](f) cross {0} with beta0 at 1: ${fmtBeta(st.beta)} (complement shrunk)`);
   }
 }
 

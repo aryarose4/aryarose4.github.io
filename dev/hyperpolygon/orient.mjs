@@ -21,7 +21,7 @@
 import { makeHyperpolygon } from "./solver.js";
 import { makeOrientor } from "./orientation.js";
 
-const BETA = [1 / 6, 1 / 7, 1 / 7, 1 / 10];
+const BETA = [0.5, 0.5, 0.5, 0.25];
 const DT = 1 / 60;
 const SETTLE = 40;
 const FL = 1 - Math.exp(-DT / 0.04); // transport lag factor per frame
@@ -211,7 +211,7 @@ function pathPoint(path, f) {
 // linear walk from widget defaults to the path start (init realism)
 function walkPoint(path, f) {
   const d = pathPoint(path, 0);
-  return { r: 0.5 + (d.r - 0.5) * f, s: d.s * f, t: 0.5 + (d.t - 0.5) * f };
+  return { r: 0.5 + (d.r - 0.5) * f, s: d.s * f, t: d.t * f };
 }
 
 let failures = 0;
@@ -346,7 +346,7 @@ report(
 );
 
 // ---- C: one-step jumps from widget defaults ----
-const defPts = solve(0.5, 0, 0.5);
+const defPts = solve(0.5, 0, 0);
 let worstCJt = 0;
 let worstCEx = 0;
 let worstCpin = 0;
@@ -416,7 +416,7 @@ report(
   const target = { r: 0.25, s: 0.5, t: 0.7 };
   function route(order) {
     const orientor = makeOrientor();
-    let cur = { r: 0.5, s: 0, t: 0.5 };
+    let cur = { r: 0.5, s: 0, t: 0 };
     let pts = solve(cur.r, cur.s, cur.t);
     orientor.update(pts, DT, { idle: true });
     for (let k = 0; k < SETTLE; k++) orientor.update(pts, DT, { idle: true });

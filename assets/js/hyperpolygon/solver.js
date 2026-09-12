@@ -12,11 +12,15 @@
 // Pipeline (matching the notebook step by step):
 //   1. x = [[sqrt(2 beta1), 0, 1, 1-r], [0, 1, 1, r e^{i theta}]]
 //   2. y: 7 free entries solved from mu_C = 0, mu_SL = 0 with
-//      y42 = t/(1-t) prescribed; whole y scaled by (1-r).
+//      y42 = t/(1-t) prescribed; whole y scaled by (1 - reff).
 //      Evaluated at reff = min(r, 1-1e-5): the linear system is
 //      singular at r = 1 and the (1-r) factor cancels the pole, so
 //      the r = 1 value is obtained as the limit (offset chosen to
 //      balance truncation vs conditioning of the near-singular solve).
+//      AT the r endpoints the balanced pair is instead evaluated as
+//      the limit at a small offset (see the endpoint-retry block in
+//      makeHyperpolygon): both endpoints are degenerate for the raw
+//      pair the balancer is fed and would otherwise stall.
 //   3. fixMuU1: closed-form (C*)^4 balancing (torus action
 //      x -> x.diag(1/lam^2), y -> diag(lam^2).y) solving
 //      mu_U1 = beta exactly. Per leg: c/u - d u = 2 beta with
@@ -179,6 +183,20 @@ export function solveY(x, reff, t) {
 // U(1)^4 balancing: solves mu_U1(x', y') = beta exactly.
 // Torus action x -> x.diag(1/lam^2), y -> diag(lam^2).y; per leg
 // c/u - d u = 2 beta with u = lam^4 has the closed-form positive root.
+// The root is evaluated in the rationalized form
+//   u = c / (beta + sqrt(beta^2 + c d)),
+// which is algebraically identical to (-beta + sqrt(beta^2 + c d)) / d
+// (multiply num and denom by beta + sqrt(...): the numerator becomes
+// sqrt(...)^2 - beta^2 = c d, and the d cancels) but free of the total
+// numerator cancellation that destroys it when c*d <<~ beta^2 * 2^-52:
+// there (-beta + sqrt(...)) rounds to exactly 0, u = 0, and the x-scale
+// 1/lam^2 = 1/0 = Infinity produces NaN. That regime is reached for real
+// parameters: d = |y_leg|^2 ~ r^2 near r = 0 and d ~ (1-reff)^2 near
+// r = 1 (the whole y is scaled by 1-reff). The rationalized form is
+// forward-stable (every factor carries its own relative error) and its
+// d -> 0 limit c/(2 beta) matches the d == 0 branch exactly, so the two
+// branches agree seamlessly on legs whose y vanishes. As c -> 0 it gives
+// u -> 0 like the old form. Healthy solves change only in the last ulps.
 export function fixMuU1(x, y, beta) {
   const c = [];
   const d = [];
@@ -191,7 +209,7 @@ export function fixMuU1(x, y, beta) {
   for (let i = 0; i < 4; i++) {
     u.push(
       d[i] > 0
-        ? (-beta[i] + Math.sqrt(beta[i] * beta[i] + c[i] * d[i])) / d[i]
+        ? c[i] / (beta[i] + Math.sqrt(beta[i] * beta[i] + c[i] * d[i]))
         : c[i] / (2 * beta[i])
     );
     lam.push(Math.pow(u[i], 0.25));
@@ -276,6 +294,10 @@ function normInf3(v) {
   return Math.max(Math.abs(v[0]), Math.abs(v[1]), Math.abs(v[2]));
 }
 
+function euclidNorm3(v) {
+  return Math.hypot(v[0], v[1], v[2]);
+}
+
 // F(p) = su(2) coordinates of mu_SU2 after U(1)^4 balancing, with
 // A = [[1, a12 + i b12], [0, a22^2]] (fast path, as in MakeHyperpolygon)
 function makeFastResidual(x0, y0, beta) {
@@ -290,11 +312,13 @@ function makeFastResidual(x0, y0, beta) {
   };
 }
 
-// damped Newton with numeric Jacobian
-function newton(F, p0) {
+// damped Newton with numeric Jacobian; norm selects the line-search merit
+// function (the historical path uses the max norm; euclidNorm3 is offered
+// as a rescue variant, see makeHyperpolygon)
+function newton(F, p0, norm = normInf3) {
   let p = p0.slice();
   let f = F(p);
-  let n0 = normInf3(f);
+  let n0 = norm(f);
   for (let it = 0; it < 60; it++) {
     if (n0 < 1e-11) break;
     const J = [
@@ -318,10 +342,10 @@ function newton(F, p0) {
     for (let ls = 0; ls < 20; ls++) {
       const pn = [p[0] + alpha * dp[0], p[1] + alpha * dp[1], p[2] + alpha * dp[2]];
       const fn = F(pn);
-      if (normInf3(fn) < base) {
+      if (norm(fn) < base) {
         p = pn;
         f = fn;
-        n0 = normInf3(fn);
+        n0 = norm(fn);
         improved = true;
         break;
       }
@@ -461,6 +485,113 @@ function minimize1D(g, lo, hi) {
 
 const TOLERANCE = 1e-3;
 
+// rescue starts (see balancedPair): extra Newton starts, Euclidean-line-search
+// Newton starts, and stable-fallback starts tried when the primary balance
+// stalls (basin traps observed at parameter-space endpoints and near t = 0)
+const RESCUE_NEWTON_STARTS = [
+  [0, 0, 2],
+  [0.7, 0.7, 1],
+  [-0.7, -0.7, 1],
+  [-0.3, 0.3, 1],
+];
+const RESCUE_EUCLID_STARTS = [
+  [0, 0, 1],
+  [-0.3, 0.3, 1],
+];
+const RESCUE_STABLE_STARTS = [
+  [0.7, -0.7, 1],
+  [0, 0, 0.25],
+];
+
+// Euclidean norm of the su(2) residual of a balanced pair
+function su2NormOf(pair) {
+  const s = muSU2Coords(pair[0], pair[1]);
+  return Math.hypot(s[0], s[1], s[2]);
+}
+
+// max-norm of mu_C of a balanced pair
+function muCNormOf(pair) {
+  return Math.max(...muC(pair[0], pair[1]).map(cAbs2)) ** 0.5;
+}
+
+// Endpoint retry selection: prefer the candidate when both representatives
+// are fully converged and the candidate has the smaller mu_C mismatch (the
+// O(1-reff) endpoint artifact moves with the offset), otherwise when it has
+// the smaller su(2) residual (NaN candidates never win: comparisons fail).
+function pairBetter(cand, best) {
+  const a = su2NormOf(cand);
+  const b = su2NormOf(best);
+  if (!(a <= 1e-9) || !(b <= 1e-9)) {
+    return a < b;
+  }
+  return muCNormOf(cand) < muCNormOf(best);
+}
+
+// The complete balancing cascade for one raw pair (x0, y0): damped Newton
+// from [0, 0, 1] (historical max-norm line search), the cyclic stable
+// fallback when Newton fails or stalls above 1e-8, then the rescue starts
+// when the su(2) residual is still above the 1e-6 rescue gate.
+// Returns [pair, usedStable]; usedStable keeps the historical meaning
+// (the initial Newton attempt failed, i.e. the stable fallback produced
+// the surviving pair). The gate comparisons are NaN-safe (!(x <= eps)) so a
+// NaN residual routes into the rescue instead of silently returning NaN.
+function balancedPair(x0, y0, beta) {
+  const F = makeFastResidual(x0, y0, beta);
+  const newtonPair = (p0, norm = normInf3) => {
+    const nrm = newton(F, p0, norm);
+    if (!(nrm.residual <= TOLERANCE)) return null;
+    const A = [
+      [C(1), [nrm.p[0], nrm.p[1]]],
+      [C(0), C(nrm.p[2] * nrm.p[2])],
+    ];
+    const [xa, ya] = actCentral(A, x0, y0);
+    return fixMuU1(xa, ya, beta);
+  };
+  let pair = newtonPair([0, 0, 1]);
+  const usedStable = pair === null;
+  if (pair !== null) {
+    // if Newton stalled above the tight threshold, also try the stable
+    // fallback and keep the more accurate result
+    if (su2NormOf(pair) > 1e-8) {
+      const alt = stablePath(x0, y0, beta, TOLERANCE);
+      if (su2NormOf(alt) < su2NormOf(pair)) {
+        pair = alt;
+      }
+    }
+  } else {
+    pair = stablePath(x0, y0, beta, TOLERANCE);
+  }
+  // rescue: for rare parameter points both Newton and the cyclic fallback
+  // land in a local minimum (observed near t = 0 for lopsided in-chamber
+  // betas, and at the r endpoints r = 0 and r = 1, where the su(2) basin of
+  // attraction of the balanced point shrinks dramatically: at the widget's
+  // swapped beta the [0,0,1] start stalls at ~0.25 for exactly r = 0 and
+  // the max-norm line search walks past the narrow true basin near r = 1).
+  // Retry from varied starts and merit functions and keep the best
+  // representative; convergent solves never enter this branch.
+  if (!(su2NormOf(pair) <= 1e-6)) {
+    for (const p0 of RESCUE_NEWTON_STARTS) {
+      const cand = newtonPair(p0);
+      if (cand !== null && su2NormOf(cand) < su2NormOf(pair)) {
+        pair = cand;
+      }
+    }
+    for (const p0 of RESCUE_EUCLID_STARTS) {
+      const cand = newtonPair(p0, euclidNorm3);
+      if (cand !== null && su2NormOf(cand) < su2NormOf(pair)) {
+        pair = cand;
+      }
+    }
+    for (const p0 of RESCUE_STABLE_STARTS) {
+      const cand = stablePath(x0, y0, beta, TOLERANCE, p0);
+      if (su2NormOf(cand) < su2NormOf(pair)) {
+        pair = cand;
+      }
+    }
+  }
+  return [pair, usedStable];
+}
+
 // swap quiver legs 2 and 3 (columns 2/3 of x, rows 2/3 of y); fresh copies
 function swapLegs23(x, y) {
   const xs = [
@@ -484,51 +615,45 @@ export function makeHyperpolygon(r, theta, t, beta, permute = true) {
   const y0 = solveY(ySolveX, reff, t);
   const x0 = buildX(r, theta, beta[0]);
 
-  const F = makeFastResidual(x0, y0, beta);
-  const su2Norm = (p) => {
-    const s = muSU2Coords(p[0], p[1]);
-    return Math.hypot(s[0], s[1], s[2]);
-  };
-  const newtonPair = (p0) => {
-    const nrm = newton(F, p0);
-    if (nrm.residual > TOLERANCE) return null;
-    const A = [
-      [C(1), [nrm.p[0], nrm.p[1]]],
-      [C(0), C(nrm.p[2] * nrm.p[2])],
-    ];
-    const [xa, ya] = actCentral(A, x0, y0);
-    return fixMuU1(xa, ya, beta);
-  };
-  let pair = newtonPair([0, 0, 1]);
-  const usedStable = pair === null;
-  if (pair !== null) {
-    // if Newton stalled above the tight threshold, also try the stable
-    // fallback and keep the more accurate result
-    if (su2Norm(pair) > 1e-8) {
-      const alt = stablePath(x0, y0, beta, TOLERANCE);
-      if (su2Norm(alt) < su2Norm(pair)) {
-        pair = alt;
-      }
-    }
-  } else {
-    pair = stablePath(x0, y0, beta, TOLERANCE);
-  }
-  // rescue: for rare parameter points both Newton and the cyclic fallback
-  // land in a local minimum (observed near t = 0 for lopsided in-chamber
-  // betas, residual ~1e-1). Retry from varied starts and keep the best
-  // representative; convergent solves never enter this branch.
-  if (su2Norm(pair) > 1e-6) {
-    const altStarts = [[0, 0, 2], [0.7, 0.7, 1], [-0.7, -0.7, 1]];
-    for (const p0 of altStarts) {
-      const cand = newtonPair(p0);
-      if (cand !== null && su2Norm(cand) < su2Norm(pair)) {
-        pair = cand;
-      }
-    }
-    const altStable = [[0.7, -0.7, 1], [0, 0, 0.25]];
-    for (const p0 of altStable) {
-      const cand = stablePath(x0, y0, beta, TOLERANCE, p0);
-      if (su2Norm(cand) < su2Norm(pair)) {
+  const [pair0, usedStable] = balancedPair(x0, y0, beta);
+  let pair = pair0;
+
+  // Endpoint retries. Both ends of the r axis are degenerate for the raw
+  // pair the pipeline feeds the balancer, in complementary ways:
+  //   r = 0: the y-solve is perfectly regular, but x columns 0 and 3
+  //     coincide ([sqrt(2 beta0), 0] and [1, 0] at beta0 = 1/2), the central
+  //     A-orbit loses a dimension, and the su(2) balancing stalls at a flat
+  //     ~0.25 plateau for every start (measured over the whole fast-slice
+  //     box); at the true r = 0 point no start recovers the basin.
+  //   r = 1: the y-solve is singular exactly at r = 1 (historical offset
+  //     reff = 1-1e-5), the mixed pair inherits an O(1-reff) mu_C mismatch,
+  //     and near the endpoint the max-norm Newton line search walks past the
+  //     narrow su(2) basin (the Euclidean-line-search variant converges).
+  // So when the cascade above leaves the endpoint pair broken (or, at the
+  // high end, its mu_C sits at the offset scale), re-run the whole cascade
+  // on the consistent pair evaluated AT the offset point (x built at
+  // reffAlt, y solved at reffAlt). This is the display-at-the-limit
+  // evaluation: the returned representative solves every moment map
+  // equation exactly at (reffAlt, theta, t), differs from the true endpoint
+  // representative by O(reffAlt) in the parameters (polygon invariants move
+  // well below display precision), and carries no mu_C artifact at all.
+  // It also rescues the t = 0 corners, where y vanishes identically and a
+  // y-only offset would be a no-op. Healthy solves (1e-5 < r < 1-1e-5, su2
+  // and mu_C clean) never enter this branch.
+  const atLowEnd = r <= 1e-5;
+  const atHighEnd = r > 1 - 1e-5;
+  if (
+    (atLowEnd || atHighEnd) &&
+    (!(su2NormOf(pair) <= 1e-6) || (atHighEnd && muCNormOf(pair) > 1e-9))
+  ) {
+    const offsets = atLowEnd ? [1e-9, 1e-6] : [1e-6, 1e-8];
+    for (const off of offsets) {
+      const reffAlt = atLowEnd ? off : 1 - off;
+      const x0Alt = buildX(reffAlt, theta, beta[0]);
+      const y0Alt = solveY(x0Alt, reffAlt, t);
+      if (!y0Alt) continue;
+      const [cand] = balancedPair(x0Alt, y0Alt, beta);
+      if (cand !== null && pairBetter(cand, pair)) {
         pair = cand;
       }
     }
