@@ -4,12 +4,38 @@
 import { makeHyperpolygon } from "./solver.js";
 import { makeOrientor } from "./orientation.js";
 import { shortSubsets, chamberInterval, applyBetaDrag, breakingSubsets } from "./chambers.js";
+import { makeSideView, probeExteriorMap } from "./sideview.js";
 
 const T_SOLVE_MAX = 0.99;
 
 const PALETTES = {
-  light: { edgeA: 0xc0392b, edgeB: 0x2c5f8a, axes: 0xb0b0b0, markers: 0x808080, border: "#d0d0d0", caption: "#666666" },
-  dark: { edgeA: 0xff6b5b, edgeB: 0x7ab3ff, axes: 0x555f6e, markers: 0x9aa4b2, border: "#3a414b", caption: "#a0a0a0" },
+  light: {
+    edgeA: 0xc0392b,
+    edgeB: 0x2c5f8a,
+    axes: 0xb0b0b0,
+    markers: 0x808080,
+    border: "#d0d0d0",
+    caption: "#666666",
+    // side view: the unhighlighted exterior spheres carry a soft blue-gray
+    // tint so they read as glass bubbles on the white page; the active one
+    // lerps to pure white per the spec
+    ext: 0xb9c6d4,
+    parab: 0x4a7fd6,
+    arc: 0x9aa4b2,
+    sideBg: null,
+  },
+  dark: {
+    edgeA: 0xff6b5b,
+    edgeB: 0x7ab3ff,
+    axes: 0x555f6e,
+    markers: 0x9aa4b2,
+    border: "#3a414b",
+    caption: "#a0a0a0",
+    ext: 0x9fb0c2,
+    parab: 0x5a92e0,
+    arc: 0x707c8a,
+    sideBg: null,
+  },
 };
 
 function isDark() {
@@ -142,11 +168,40 @@ function activate(container) {
   // never crossed), so dragging can never change the chamber; the amber
   // box highlight is the hook for the planned per-inequality "flop".
   const chamberShorts = shortSubsets(beta);
+  // which chamberShorts pair slot attaches at each exterior-sphere point
+  // (south, equator, north): measured once at load from the polygon
+  // parallelism at the three attachment points (sideview.js). The slot
+  // map is chamber-independent (sideview.mjs [P]), so with the chamber
+  // locked at load this never needs re-probing; sphere SIZES update live
+  // with beta. Null entries (solver failure) fall back to the unused
+  // slots in fixed order so all three spheres exist.
+  const extMap = [null, null, null];
+  try {
+    const probed = probeExteriorMap(beta, chamberShorts).map;
+    for (let k = 0; k < 3; k++) extMap[k] = probed[k];
+  } catch (err) {
+    // leave nulls; the fill below restores the spec's three spheres
+  }
+  const spareSlots = [];
+  for (let s = 5; s <= 7; s++) if (extMap.indexOf(s) === -1) spareSlots.push(s);
+  for (let k = 0; k < 3; k++) {
+    if (extMap[k] === null && spareSlots.length > 0) extMap[k] = spareSlots.shift();
+  }
   const canvasBox = document.createElement("div");
   canvasBox.style.width = "100%";
   canvasBox.style.height = "420px";
   canvasBox.style.boxSizing = "border-box";
   container.appendChild(canvasBox);
+
+  // side view (task list #5): the (r, theta, t) moduli portrait — central
+  // sphere + three exterior spheres + the flow dot; sideview.js owns the
+  // scene, this widget only feeds it slider state
+  const sideBox = document.createElement("div");
+  sideBox.style.width = "100%";
+  sideBox.style.height = "320px";
+  sideBox.style.boxSizing = "border-box";
+  sideBox.style.marginTop = "10px";
+  container.appendChild(sideBox);
 
   const controlsRow = document.createElement("div");
   controlsRow.style.display = "flex";
@@ -215,6 +270,8 @@ function activate(container) {
   let lastVerts = null;
   let lastInput = -1e9;
   let lastFrame = performance.now();
+  // side-view scene; created below (applyColors refreshes its theme too)
+  const sideView = makeSideView(sideBox, { getPalette: palette });
 
   const colA = new THREE.Color();
   const colB = new THREE.Color();
@@ -239,6 +296,7 @@ function activate(container) {
     caption.style.color = pal.caption;
     betaHeader.style.color = pal.caption;
     chamberLabel.style.color = pal.caption;
+    if (sideView) sideView.refreshTheme();
   }
 
   function solveAndDraw() {
@@ -361,6 +419,47 @@ function activate(container) {
   const tInput = makeSlider("t", 0, 1, 0.01, 0, (v) =>
     v >= 1 ? "t→∞" : (v / (1 - v)).toFixed(2)
   );
+
+  // "lim t→∞" (spec item 5): appears while the dot is on an exterior
+  // sphere near the t -> infinity end (flowState.nearInfinity, t >= 0.9).
+  // The click behavior is deliberately unspecified for now — the user
+  // will spell it out when we get to that stage.
+  const limBtn = document.createElement("button");
+  limBtn.type = "button";
+  limBtn.className = "hp-btn";
+  limBtn.textContent = "lim t\u2192\u221e";
+  limBtn.style.display = "none";
+  limBtn.title = "lim t\u2192\u221e \u2014 behavior to be specified";
+  limBtn.addEventListener("click", () => {
+    caption.textContent = "lim t\u2192\u221e: behavior pending specification";
+  });
+  tInput.parentNode.appendChild(limBtn);
+
+  // Side-view feed. Runs on the same cadence as the solve (pending block
+  // in the loop) and immediately on t-slider hover (the paraboloid
+  // preview must appear without a solve). The side view uses the RAW t
+  // (1 allowed): the dot renders the t -> infinity LIMIT while the solve
+  // keeps its own T_SOLVE_MAX clamp.
+  let tHover = false;
+  function refreshSide() {
+    if (!sideView) return;
+    const r = parseFloat(rInput.value);
+    const theta = parseFloat(thetaInput.value) * Math.PI;
+    const t = parseFloat(tInput.value);
+    const st = sideView.update(r, theta, t, beta, chamberShorts, extMap, tHover || t > 0);
+    // the dot is "near infinity" only on the exterior branch
+    limBtn.style.display = st && st.nearInfinity ? "" : "none";
+  }
+  function setTHover(on) {
+    if (tHover === on) return;
+    tHover = on;
+    if (sideView) sideView.setHover(tHover);
+    refreshSide();
+  }
+  tInput.addEventListener("mouseenter", () => setTHover(true));
+  tInput.addEventListener("mouseleave", () => setTHover(false));
+  tInput.addEventListener("focus", () => setTHover(true));
+  tInput.addEventListener("blur", () => setTHover(false));
 
   // beta sliders: the red spans at the slider edges are the parts beyond
   // the fixed chamber's walls, recomputed on every change (see
@@ -700,6 +799,7 @@ function activate(container) {
     if (pending) {
       pending = false;
       solveAndDraw();
+      refreshSide();
     }
     if (lastVerts) {
       const q = orientor.update(lastVerts, dt, { idle: now - lastInput > 250 });
