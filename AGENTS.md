@@ -69,7 +69,22 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   pair only solves mu_U1 = beta when beta2 = beta3 (true for the widget's
   fixed beta). The swap reorders the polygon traversal AFTER v4 (v1-v4
   and the chord endpoint v4 are leg-sums and unchanged; v5-v7 move,
-  closure v8 unchanged). Harnesses pass `permute = false` where the
+  closure v8 unchanged). PERMUTE_23 (2026-09-13, user request): the
+  module exports `export const PERMUTE_23`, the single
+  true/false switch for the widget-side beta legs 2/3 permutation — it
+  gates BOTH the widget's beta pre-swap and the `permute` argument
+  (widget.js and sideview.js's probe import it), so flipping it
+  switches the widget's call pattern in one place. With
+  PERMUTE_23 = false the widget displays the unpermuted solved
+  representative (the notebook leg convention validate.mjs compares
+  against); with PERMUTE_23 = true it uses the historical swapped
+  pattern. The flag was set false per user request 2026-09-13 and the
+  user subsequently flipped it back to TRUE (the working tree value,
+  display user-verified 2026-09-13 "looks great") — both settings are
+  user-approved; check the source for the live value. Displayed leg j
+  is user beta leg j under either setting, and
+  mu_U1 = user beta under either setting. Harnesses pass
+  `permute = false` where the
   notebook leg convention or solved-representative residuals matter
   (sweep.mjs/edge.mjs/validate.mjs — required since two of the sweep
   beta sets have beta2 != beta3). Standard path: damped Newton from
@@ -204,24 +219,32 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   `hp-breaking` class while its inequality sits exactly on a wall —
   and now hosts a small "Cross Wall" button while amber (the flop
   action, see below). CRITICAL widget detail:
-  solveAndDraw calls makeHyperpolygon(r, theta, t, [b0, b1, b3, b2],
-  true) — legs 2/3 PRE-SWAPPED so the permuted returned pair satisfies
-  mu_U1 = beta for the user's beta even when beta2 != beta3; when
-  beta2 = beta3 this is exactly the historical call, so no display jump
-  when beta2 leaves 1/7 and the default look is unchanged. A
+  solveAndDraw's call pattern is gated on PERMUTE_23 (solver.js, see the
+  Files entry — currently TRUE in the working tree, user-verified): with
+  PERMUTE_23 = false it calls makeHyperpolygon(r, theta, t, beta, false)
+  (beta unchanged, unpermuted solved representative); with
+  PERMUTE_23 = true it calls makeHyperpolygon(r, theta, t,
+  [b0, b1, b3, b2], true) — legs 2/3 PRE-SWAPPED so the permuted returned
+  pair satisfies mu_U1 = beta for the user's beta even when beta2 != beta3
+  (the two swaps cancel in the display, so displayed leg j is user leg j
+  either way). The flag flip changes the displayed polygon's leg 2/3
+  traversal order (chord v0->v4 and closure unchanged); sideview.js's
+  probe follows the same flag. A
   try/catch + NaN check around the solve shows a warning caption and
   freezes the last geometry instead of drawing garbage.
   Widget additions (2026-09-12, tasks 1/2/4): (1) the four beta sliders
   live in a dedicated grid row whose column count (4/2/1) is picked by a
   ResizeObserver from the measured width (thresholds 700px/340px — a
   flex-wrap row with a 170px basis produced the forbidden 3+1 layout; an
-  explicit column count can never orphan a slider). (2) "Scale β⃗ Down"/
-  "Scale β⃗ Up" buttons below the beta row (SCALE_DOWN_MIN = 0.02, see
-  the task list): down multiplies all four betas by 0.25 (fp-exact), up
-  by min(4, 1/max(beta)) with the largest weight pinned EXACTLY to 1
-  (x*(1/x) can land 1 ulp off — the pin fixes that); the whole state is
-  re-synced from the scaled tuple (no clamping — chambers are
-  scale-invariant); buttons disabled via syncScaleButtons() called from
+   explicit column count can never orphan a slider). (2) "Scale β⃗ Down"/
+   "Scale β⃗ Up" buttons below the beta row (SCALE_DOWN_MIN = 0.02, see
+   the task list; REVISED 2026-09-13 per user feedback — SUBTLE factors:
+   down multiplies all four betas by 0.8, up by min(1.25, 1/max(beta))
+   with the largest weight pinned EXACTLY to 1 only when the factor was
+   clamped (1/max <= 1.25); the old x0.25/up-to-x4 steps maxed weights
+   out in one click); the whole state is
+   re-synced from the scaled tuple (no clamping — chambers are
+   scale-invariant); buttons disabled via syncScaleButtons() called from
   syncBetaSliders() so drags update them too. (3) Each amber chamber box
   carries a "Cross Wall" button: crossWall(k) replaces chamberShorts[k]
   by its complement (adjacent chamber across that wall) and nudges beta
@@ -240,36 +263,71 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   battery `dev/hyperpolygon/sideview.mjs`. Two layers: pure geometry +
   probe (Node-safe, imported by the harness) and a browser-only
   `makeSideView(host, opts)` three.js factory (returns null without
-  global THREE). The portrait: a WHITE central 2-sphere (radius
-  CENTRAL_RADIUS = 1 — PLACEHOLDER until the user supplies the
-  chamber-dependent area formula; single knob) with the black dot at
-  `spherePoint(r, theta)`: r = 0 is the south pole (0,-1,0), r = 1 the
-  north pole, theta = 0 the +x meridian, y = -cos(pi*r) (axis = three.js
+   global THREE). The portrait: a WHITE central 2-sphere whose size is
+   the user's FORMULA (2026-09-13, replaces the old CENTRAL_RADIUS = 1
+   placeholder, which is removed): z_max = min(|b0+b3|, |b1+b2|), z_min =
+   max(|b3-b0|, |b2-b1|), area tau_central = (pi/2)*|z_max - z_min| (the
+   ABSOLUTE value per the user's same-day correction — z_max - z_min is
+   negative exactly when a leg is dominant and the area is the magnitude,
+   so the central sphere persists in dominant chambers),
+   `centralRadius(beta)` = sqrt(tau/(4 pi)) = sqrt(|z_max - z_min|/8)
+   (0.25 at the default beta; 1e-9 radius floor for the exact-tie
+   corners where z_max = z_min; insensitive to PERMUTE_23 because
+   displayed leg j IS user
+   leg j under either setting, so beta is never converted). The black dot
+   sits at `spherePoint(r, theta, R)` (R now REQUIRED = centralRadius):
+   r = 0 is the south pole (0,-R,0), r = 1 the north pole, theta = 0 the
+   +x meridian, y = -cos(pi*r) (axis = three.js
   +y, matching the polygon view's chord pin). THREE exterior 2-spheres
   attach at (r,theta,t) = (0,0,0), (0.5,0,0), (1,0,0) — the r slider's
   snap points with theta = 0 — externally tangent: center = attachment +
   radius * outward normal. Which chamberShorts PAIR slot attaches where
-  is MEASURED at load by `probeExteriorMap` (3-6 widget-exact solves;
-  edge-parallelism sine residuals; retry at theta = 1e-4 escapes the
-  documented theta=0 stall basin): the slot map is chamber-INDEPENDENT,
-  [6, 5, 7] = south/equator/north — i.e. the splits {0,2}|{1,3},
-  {0,1}|{2,3}, {0,3}|{1,2} respectively, each attachment carrying THAT
-  chamber's short side (measured over 8 betas / 6 chambers, worst
-  residual 2.7e-6, runner-up margin >= 1:3.3e4; the widget fills any
-  null probe entry from the spare slots so all three spheres exist).
-  NOTE (measured, matches walls.mjs [E]): the widget's beta pre-swap and
-  the solver's permute=true cancel, so displayed polygon leg j IS user
-  leg j — no PERM conversion anywhere (PERM = [0,1,3,2] is exported only
-  as documentation of that identity). Exterior sphere size from the
-  user's formula: surface area = (pi/2)(sum_comp - sum_I) for I = the
+is MEASURED at load by `probeExteriorMap` (3-6 widget-exact solves;
+   edge-parallelism sine residuals; retry at theta = 1e-4 escapes the
+   documented theta=0 stall basin): the slot map is chamber-INDEPENDENT
+   and follows PERMUTE_23 (solver.js): [6, 5, 7] = south/equator/north
+   with the current PERMUTE_23 = true (historical permuted call pattern —
+   splits {0,2}|{1,3}, {0,1}|{2,3}, {0,3}|{1,2} respectively), and
+   [7, 5, 6]
+   = south/equator/north under PERMUTE_23 = false (unpermuted
+   representative — the r-leg pairs with leg 0 at r = 0 and leg 1 at
+   r = 1; splits {0,3}|{1,2}, {0,1}|{2,3}, {0,2}|{1,3}), each attachment
+   carrying THAT chamber's short side (measured over 8 betas / 6
+   chambers, worst residual 4.6e-6 unpermuted / 2.7e-6 permuted,
+   runner-up margin >= 1:3.3e4; the widget fills any
+   null probe entry from the spare slots so all three spheres exist).
+   NOTE (measured, matches walls.mjs [E]): under either PERMUTE_23
+   setting the displayed polygon leg j IS user
+   leg j — no PERM conversion anywhere (PERM = [0,1,3,2] is exported only
+as documentation of the permuted pattern's canceling double swap).
+   Exterior sphere size from the
+   user's formula: surface area = (pi/2)(sum_comp - sum_I) for I = the
   mapped pair short => `pairRadius` = sqrt(D/8); sizes update live with
-  beta (scale buttons shrink/grow the bubbles); D -> 0 on a pair wall
-  shrinks a sphere away (radius floor 1e-9). Sphere appearance:
-  unhighlighted = transparent (opacity 0.16, soft blue-gray palette
-  tint), highlighted = opaque white with ~80 ms exponential lag when
-  flowState's exterior branch owns that attachment (sitting exactly ON
-  the attachment at t = 0 already highlights — branch selection only
-  checks r/theta, not t). Flow model (`flowState`, pure): exterior
+   beta (scale buttons shrink/grow the bubbles); D -> 0 on a pair wall
+   shrinks a sphere away (radius floor 1e-9). Sphere appearance
+   (2026-09-13 revision): unhighlighted = transparent (opacity 0.16, soft
+   blue-gray palette tint); highlighted = WHITE with ~80 ms exponential
+   lag when flowState's exterior branch owns that attachment (sitting
+   exactly ON the attachment at t = 0 already highlights — branch
+   selection only checks r/theta, not t) — white is now opacity 0.92, NOT
+   1, so a black dot hidden on a sphere's backside stays faintly visible;
+   and while the dot CLIMBS an exterior sphere (exterior branch with
+   t > 0) the CENTRAL sphere turns grey/transparent (color -> 0xb0b0b0,
+   opacity 0.92 -> 0.3, same ~80 ms lag; centralGrey animation) — at
+   t = 0 the central sphere stays white (the dot merely touches the
+   exterior sphere there). BUG FIXED 2026-09-13 (user report "spheres
+   still not highlighted"): the glow compared against
+   lastState.exterior.slot, which is ALWAYS undefined — the branch slot
+   lives at the TOP level of the flow state (lastState.slot); the
+   exterior frame object carries only center/radius/normal/side/
+   attachment. The bubbles had never highlighted since the first
+   increment. All sphere materials are transparent with
+   depthWrite off, so the opaque dot always shows through the blend.
+   Central-sphere size follows beta via centralRadius in update(); the
+   side-view camera (0.85, 0.5, 1.0, near 0.05) and dot radius (0.015)
+   were re-framed for the formula radius (~0.25 at default beta, 4x
+   smaller than the old placeholder 1). Flow model (`flowState`, pure):
+   exterior
   branch iff (r, theta) sits on an attachment (poles accept ANY theta —
   theta is degenerate on the sphere there; equator needs theta ~ 0; tol
   1e-9 on the post-snap slider values): dot = center + rk*(-cos(a)n +
@@ -278,9 +336,12 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   (canonical meridian; the future level-circle slider will rotate it).
   Central branch: the dot climbs the paraboloid z_local = rho^2/(2f)
   KISSING the sphere at the dot's (r,theta) point, apex there, axis =
-  outward normal, opening outward/upward; phi(t) = atan(0.5 t/(1-t))
-  capped at 80 deg (constants PHI_K/PHI_CAP/PARAB_FOCAL = 0.6 — the
-  monotone t->arc map is a schematic choice, user-tunable); guide arc =
+   outward normal, opening outward/upward; phi(t) = atan(0.5 t/(1-t))
+   capped at 80 deg (constants PHI_K/PHI_CAP — the monotone t->arc map is
+   a schematic choice, user-tunable; PARAB_FOCAL 0.6 -> 0.3 -> 0.1 on
+   user request 2026-09-13 ("too wide", then "even thinner"), cutting the
+   drawn paraboloid radius rhoMax = PARAB_FOCAL*tan(PHI_CAP) each time);
+   guide arc =
   the +u meridian (u = yHat made tangent). Paraboloid visibility is the
   WIDGET's decision: hovering the t slider OR t > 0 (spec item 3); the
   exterior branch hides it (spec item 4). Branch CROSSING at the snap
@@ -293,11 +354,13 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   T_SOLVE_MAX); the "lim t->infty" button (spec item 5) lives in the
   t-slider box and appears iff flowState.nearInfinity (exterior branch,
   t >= T_NEAR_INF = 0.9) — click is a PLACEHOLDER (caption note),
-  behavior pending user spec. Battery: `sideview.mjs` [P] probe rule
-  (chamber-independent [6,5,7], strictly in-chamber tuples), [S] sizes,
-  [F] paraboloid constraint + t=0 continuity, [E] exterior-sphere
-  constraints (|dot-center| = rk exactly, endpoints attachment/antipode),
-  [N] NaN/degeneracy safety, [I] purity — 3439 checks, ~1.7 s; added to
+   behavior pending user spec. Battery: `sideview.mjs` [P] probe rule
+   (chamber-independent map following PERMUTE_23 — [6,5,7] at the current
+   setting, [7,5,6] when false —, strictly in-chamber tuples), [S] sizes
+   (pair + the new central formula incl. the dominant clamp), [F]
+   paraboloid constraint + t=0 continuity, [E] exterior-sphere
+   constraints (|dot-center| = rk exactly, endpoints attachment/antipode),
+   [N] NaN/degeneracy safety, [I] purity — 3448 checks, ~1.8 s; added to
   run-validation.sh (copies sideview.js like the other modules).
 - `mathematica/` — reference notebooks and legacy data. Excluded from
   the Jekyll build; `mathematica/hyperpolygonData*` is gitignored
@@ -373,9 +436,10 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   point; [C] 3500/3500 idempotent, off-wall, in (0,1]; [G]/[H]
   chamber-locked drags hold every invariant (min chamber slack >=
   -1e-15, idempotent, chamber never changes) and on-wall finals solve
-  to ~1e-11 at moderate t; [S] exactly 2 down-clicks from the defaults
-  with spans >= 2*WALL_MARGIN at the floor; [W] post-cross solves clean
-  with best-of-3 theta draws.
+   to ~1e-11 at moderate t; [S] 14 down-clicks from the defaults (x0.8
+   steps) with spans >= 2*WALL_MARGIN at the floor, up-walk of exactly 4
+   clicks to max 1 (x1.25 steps, pin on the clamped factor); [W] post-cross solves clean
+   with best-of-3 theta draws.
 - `orient.mjs`: 6/6 PASS; typical worst values: pinning ~1e-8 (limit
   2e-3), continuity/jump-smoothness excess over the pinning-aware bound
   0 (raw solver motion dominates near t=0.99 — the battery reports the
@@ -400,18 +464,24 @@ Tracked work items from the user's planning call; keep statuses updated.
    fix: a dedicated beta-slider grid row whose column count (4/2/1) is
    picked by a ResizeObserver on its measured width (thresholds
    700px/340px).
-2. DONE (2026-09-12, user-verified 2026-09-13): scale buttons
+2. DONE (2026-09-12, user-verified 2026-09-13; REVISED 2026-09-13 per
+   user feedback — "only subtle changes"): scale buttons
    "Scale β⃗ Down" / "Scale β⃗ Up" below the beta sliders. Down
-   multiplies all four betas by 0.25 (exact in fp — power of two); Up
-   multiplies by min(4, 1/max(beta)) and pins the largest weight
-   EXACTLY to 1.0 (x*(1/x) can land 1 ulp off) so the tuple scales
-   exactly until the largest weight equals the slider limit. Scale Up
-   is greyed out once max(beta) >= 1-1e-12; Scale Down is greyed out
-   when scaling would push max(beta) below 0.02 — the floor exists
+   multiplies all four betas by 0.8; Up multiplies by
+   min(1.25, 1/max(beta)) and pins the largest weight EXACTLY to 1.0
+   only when the factor was clamped (1/max <= 1.25; x*(1/x) can land
+   1 ulp off). The original x0.25 / up-to-x4 steps maxed weights out in
+   one click — that was the bug report. Scale Up is greyed out once
+   max(beta) >= 1-1e-12; Scale Down is greyed out when scaling would
+   push max(beta) below 0.02 — the floor exists
    because chamberInterval's hard WALL_MARGIN = 0.003 0-wall floor
    collapses the displayed allowed spans once the tuple scale
    approaches ~2*WALL_MARGIN (at the floor the spans are still >=
-   2*WALL_MARGIN; exactly 2 down-clicks from the defaults). Chambers
+   2*WALL_MARGIN; exactly 14 down-clicks from the defaults at x0.8,
+   exactly 4 up-clicks to max 1). The button labels render vec-beta via
+   a CSS overarrow (.hp-vec, a ::after "→" above a β span) — the
+   combining codepoint U+03B2+U+20D7 displayed badly, the other bug
+   report. Chambers
    are scale-invariant (the inequalities are homogeneous), so uniform
    scaling never leaves the tracked chamber — asserted by the walls.mjs
    [S] battery. Solver accuracy is NOT the limiter: measured su2 ~1e-12
@@ -466,12 +536,70 @@ Tracked work items from the user's planning call; keep statuses updated.
     (pi/2)(sum_comp - sum_I); hover-t paraboloid + t-driven central-branch
     arc; exterior-branch climb toward the antipode as t -> infinity; the
     lim t→∞ button appears near t >= 0.9 on an exterior sphere (click
-    PLACEHOLDER). Central-sphere area formula still owed by the user
-    (CENTRAL_RADIUS placeholder); future level-circle slider owed; see
-    the sideview.js Files entry for all measured/canonical choices.
+    PLACEHOLDER). SECOND INCREMENT DONE (2026-09-13, same-day user
+    message): the user's central-area FORMULA is in (centralArea/
+    centralRadius, 0.25 at the default beta; the CENTRAL_RADIUS
+    placeholder is gone), the paraboloid width was cut twice on user
+    feedback (PARAB_FOCAL 0.6 -> 0.3 -> 0.1), and the highlight rules
+    are: exterior sphere
+    white when the dot touches it, central sphere grey/transparent
+    while the dot climbs an exterior sphere (t > 0), all white spheres
+    slightly transparent (opacity 0.92) so a backside dot stays
+    visible; camera + dot re-framed for the formula radius. THIRD
+    round (2026-09-13, same day): central area now uses the ABS value
+    (user correction — the sphere persists in dominant chambers), and
+    the never-highlighting exterior glow was traced to reading
+    lastState.exterior.slot (always undefined) instead of the flow
+    state's top-level lastState.slot — fixed. All three rounds
+    user-verified 2026-09-13 ("It looks perfect!", then "Looks great").
+    Future
+    level-circle slider and lim t→∞ behavior owed; see the sideview.js
+    Files entry for all measured/canonical choices.
 
 ## Status / next milestone
 
+- DONE (2026-09-13): third side-view feedback round (3 items): (1)
+  PARAB_FOCAL 0.3 -> 0.1 ("even thinner"); (2) the exterior-sphere
+  white highlight was DEAD since the first increment — the render loop
+  read lastState.exterior.slot (always undefined; the slot lives at the
+  top level, lastState.slot) — fixed and verified by a Node trace of
+  the widget-exact glow targets (south/equator/north touches now fire
+  the right sphere); (3) central area now (pi/2)*|z_max - z_min| per
+  the user's correction (the sphere persists in dominant chambers).
+  Suite green (sideview 3448 checks incl. the abs-formula assertions,
+  walls/sweep/edge/orient unchanged; solver untouched so validate is
+  unaffected). User-verified same day ("Looks great"); the session
+  wrapped there ("we're done for now").
+- DONE (2026-09-13): user feedback round on the side view + scale
+  buttons (4 items): (1) central-sphere area FORMULA implemented
+  (centralArea/centralRadius in sideview.js, 0.25 at the default beta;
+  CENTRAL_RADIUS placeholder removed; spherePoint's R now required);
+  (2) highlight semantics — exterior spheres white (opacity 0.92, slight
+  transparency) when the dot touches them, central sphere grey/
+  transparent (0xb0b0b0, opacity 0.3) while the dot climbs an exterior
+  sphere (t > 0); (3) PARAB_FOCAL halved 0.6 -> 0.3; (4) scale buttons
+  made SUBTLE (x0.8 down / x1.25 up, pin only on the clamped factor)
+  and their labels now render vec-beta via a CSS overarrow. Full suite
+  green after the changes (sweep/walls/edge/orient/validate unchanged;
+  sideview PASS 3448 checks; walls [S] rewritten for the new factors —
+  14 down-clicks / 4 up-clicks from the defaults).
+- DONE (2026-09-13): PERMUTE_23 toggle — the widget's beta legs 2/3
+  permutation became a single true/false switch in solver.js after the
+  user request ("disable the beta_2 beta_3 permute for now; should be a
+  true/false option in the code"). The
+  single switch is `export const PERMUTE_23` in solver.js (set false at
+  the time, later flipped back to TRUE by the user — the working tree
+  value, display user-verified 2026-09-13; see the solver.js Files
+  entry);
+  widget.js's solveAndDraw and sideview.js's probe both gate their call
+  pattern on it (see the Files entries). With the flag false the widget
+  displays the unpermuted solved representative (notebook leg
+  convention): the polygon's leg 2/3 traversal order changes (v5-v7
+  move, chord/closure unchanged) and the side view's exterior-sphere
+  slot map is [7,5,6]. Full suite green after the change (sweep/walls/
+  edge/orient/validate all pass with unchanged numbers; sideview PASS
+  3439 checks with the battery's map expectation now following the
+  flag).
 - DONE: solver port + validation against legacy data (milestones 1-2).
 - DONE: milestone 3a — minimal browser display, visually verified by the
   user (2026-09-11): `assets/js/hyperpolygon/widget.js` (fixed
@@ -502,8 +630,10 @@ Tracked work items from the user's planning call; keep statuses updated.
   purgecss/build polish. The moduli-space side view (Task list #5) is
   IN PROGRESS: first increment implemented AND user-verified 2026-09-13
   ("It looks perfect!", sideview.js + sideview.mjs, see the Files
-  entry); next side-view increments: the level-circle slider, the
-  user's central-area formula, the lim t→∞ behavior. The
+  entry), second and third feedback rounds done and user-verified the
+  same day (central-area formula, highlight semantics + slot fix,
+  PARAB_FOCAL 0.1); remaining side-view work: the level-circle slider
+  and the lim t→∞ behavior. The
   chamber-"flop" interaction (planning-call task 4)
   is DONE as of 2026-09-12. Accepted known issues (do not fix without
   the user asking): (a) dominant-chamber small-t degeneracy behind the
