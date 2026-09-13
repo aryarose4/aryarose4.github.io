@@ -139,6 +139,105 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   (our su2 1.2e-11 -> 1.1e-16, muC 1e-5 -> 8.7e-19) with gauge-invariant
   legacy diffs unchanged (3.84e-4 at the documented legacy-tolerance
   spot). Regression-tested by the new edge.mjs endpoint battery.
+  LOCUS FIX (2026-09-13, user bug report "errors at (r,theta)=(0.5,0),
+  e.g. beta=(0.5,0.5,0.8,0.25), jump to something incorrect, many other
+  chambers too"): at the INTERIOR degenerate locus (r, theta) = (1/2, 0)
+  — where the parallelism defect of x columns 2 and 3, D = r e^{i theta}
+  - (1 - r), vanishes (columns (1,1) and (1-r, r e^{i theta}) become
+  parallel exactly there) — the su(2) balancing stalls for betas whose
+  balanced representative requires the two columns SEPARATED: the whole
+  balancing family preserves the parallelism (the fast slice keeps
+  col2' - col3' = a22^2 (col2 - col3) = 0 and the torus acts per leg), so
+  every start (Newton, stable fallback, all rescues) stalls at the SAME
+  beta-dependent value at EVERY t (measured 5.2e-2 for the user-example
+  beta, 5.0e-1 for a dominant leg-2 chamber; the widget-default beta has
+  a parallel-columns representative and never stalls — chamber-dependent,
+  as reported). Just off the locus the tiny column angle is amplified
+  through a near-cancellation inside the A-action, so neighbors solve,
+  but the basin is chaotic for |D| <~ 1e-6 (stalls observed up to
+  |D| ~ 6e-7, clean from ~1.5e-6). Fix (makeHyperpolygon, after the
+  endpoint retries): when the solve inside the gate disk |D| <= 1e-4
+  (100x beyond the observed band) is not fully converged — trigger 1e-9,
+  NOT the 1e-6 rescue gate, since the true branch solves to ~1e-12
+  throughout the disk and anything above is stall debris (triggering on
+  it makes the whole disk uniformly clean instead of leaving a
+  chaotically-varying 1e-10..1e-6 band) — the full cascade re-runs on
+  the consistent pair evaluated at r = 0.5 +- 1e-4 (ladder to 1e-3; the
+  nudge side follows r so the display continues the row the user is on;
+  early-break once clean to keep the cost at one extra cascade).
+  Display-at-the-limit evaluation again: the returned pair solves every
+  moment map equation exactly at (rAlt, theta, t) and its invariants
+  match the neighboring branch to ~2e-6 (r-slope of the invariants is
+  ~0.01 there) — the visible 5e-2 jump is gone. The locus rep is
+  BIT-EXACT the direct solve at the offset point (the retry builds the
+  identical x0/y0 pair), asserted by the battery. Clean solves never
+  enter the branch; the exact locus point costs ~30-115 ms once (stalled
+  primary rescue + one converging offset cascade; accepted
+  one-frame-hitch class, and the widget parks there via its snaps).
+  Exterior chambers at t = 0 are untouched (the exterior branch's own
+  degenerate-locus r-nudge returns earlier); exterior chambers at t > 0
+  are fixed by the same block (5.0e-1 -> ~1e-13). Regression-tested by
+  the new dev/hyperpolygon/locus.mjs battery (255 checks, in
+  run-validation.sh): [A] locus grid x t across chambers and both call
+  patterns, [B] the chaotic stall band inside/outside the gate disk,
+  [C] bit-exact offset identity + neighbor-branch continuity, [D]
+  widget-pattern mu_U1 = user beta at the locus, [E] seeded gate-disk
+  fuzz.
+  EXTERIOR BRANCH (2026-09-13, user request; user-verified same day
+  "Looks great"): in an "exterior chamber"
+  (one beta >= the sum of the rest; `dominantLeg(beta)` returns the
+  dominant leg j, wall inclusive up to a 1e-12 slack) the t = 0 slice
+  has NO y = 0 solution (mu_SU2 = 0 needs sum x_i x_i^dagger scalar,
+  which forces the tight-frame inequality), and the historical pipeline
+  stalls at a stick with a gap su2 = beta_j - rest. The t -> 0+ limit of
+  the genuine t > 0 solutions is instead constructed in closed form by
+  `exteriorPair(r, theta, beta, j)` and returned by makeHyperpolygon at
+  t <= 0 in exterior chambers: x_j = sqrt(2 beta_j) on one axis, every
+  other x-column parallel on the orthogonal axis, y_j = 0, every other
+  y-row on the orthogonal direction — the "minimum energy" state the
+  user specified (row j of y zero, the other rows tuned by (r,theta);
+  the polygon is an EXACT stick for all (r,theta)). Magnitudes:
+  |c_i|^2 = beta_i + S_i, |alpha_i|^2 = S_i - beta_i with
+  S_i = sqrt(beta_i^2 + K w_i), K >= 0 the unique monotone root of
+  sum_{i != j} S_i = beta_j (K = 0 exactly ON the wall, so enlarging
+  beta_j past the wall telescopes the stick taller with no jump —
+  battery [C]). The (r,theta) dependence lives in the direction weights
+  w_i = |xdir_i|^2 |ydir_i|^2 and the phases, read off the t -> 0+
+  asymptotics: pattern A (j = 0) xdir = x0 row 1 / ydir = Y col 0;
+  pattern B (j > 0) xdir = x0 row 0 + a* x0 row 1, ydir = Y col 1 -
+  a* Y col 0 with a* = Y[j][1]/Y[j][0] (0 for j = 1, -1 for j = 2,
+  -(1-reff)e^{-i theta}/reff for j = 3) chosen so the dominant leg's
+  ydir vanishes. The central complex moment map sum c_i alpha_i = 0 is
+  an algebraic identity (all four sums sum_i x0[r][i] Y[i][c] vanish);
+  Y = `exteriorYDirection(reff, theta, beta0)` is the CLOSED FORM of the
+  T-derivative direction of solveY (y = (1-reff) T Y exactly — the
+  y-system is linear in T; `ySolveDirection` is the LU equivalent, kept
+  for cross-checks). Numerics gotchas, both battery-found: (1) compute
+  aMag = sqrt(S - beta_i) as sqrt(K what/(beta_i + S_i)) — the direct
+  form rounds to 0 when K what < ulp(beta_i^2) (r = 0 spans 18 orders
+  of magnitude in w), dropping that leg's term of the central identity
+  while the others keep their contamination (~1e-10 residual); (2)
+  write Y[1][0] as reff e^{i theta} D/(1-reff) with D = reff e^{i theta}
+  - (1 - reff) — the direct two-term form cancels to O(ulp(1/2)) near
+  reff = 1/2 and the 1/sqrt(wMax) of the weight normalization amplifies
+  it. At the DEGENERATE LOCUS (r, theta) = (1/2, 0) every pattern-B
+  direction weight vanishes identically (Y degenerates to second order;
+  the t > 0 pipeline stalls there too at every t — FIXED 2026-09-13 by
+  the solver's locus retry, see the LOCUS FIX paragraph above) —
+  exteriorPair re-evaluates at
+  a tiny r offset (1e-7, growing), which continues the theta = 0 row
+  continuously (w_0 ~ w_1 ~ (r-1/2)^2, w_3 ~ (r-1/2)^4) and matches the
+  pipeline's own converged behavior next to the point. The t -> 0+
+  limit match of the closed form against the pipeline was verified to
+  ~1e-11 per-leg |x|^2, |y|^2 at t = 1e-6 for ALL FOUR dominant legs,
+  so the t = 0 display is continuous with t > 0. For t > 0 the branch
+  does NOT run (the historical pipeline already converges in exterior
+  chambers — 0/160 seeded fuzz failures, worst su2 1e-11). Widget path:
+  the branch runs on the PASSED (solve) beta before the PERMUTE_23
+  output swap, so the widget's pre-swapped call pattern handles user-
+  dominant legs 2/3 via the swapped solve-beta (battery [E]).
+  Regression-tested by the new dev/hyperpolygon/exterior.mjs battery
+  (1524 checks, in run-validation.sh).
 - `assets/js/hyperpolygon/orientation.js` — display-orientation servo,
   dependency-free ES module (read this before touching widget
   orientation). `makeOrientor()` returns `{ update(vertices, dt,
@@ -518,9 +617,14 @@ Tracked work items from the user's planning call; keep statuses updated.
    allows crossing back. KNOWN ISSUE, deliberately left per user
    instruction (2026-09-12): crossing an "odd" wall like {0} < {1,2,3}
    lands in a dominant chamber, where the balanced representative
-   degenerates for small t (su2 up to ~0.4 at t <~ 0.01) — do not
-   address until the
-   user gives instructions; the ⚠ degraded caption covers the interim.
+   degenerates for small t (su2 up to ~0.4 at t <~ 0.01) — the t = 0
+   part of this was ADDRESSED 2026-09-13 by the solver's exterior
+   branch (see the solver.js Files entry; at t = 0 the exterior branch
+   now returns the exact minimum-energy stick, wall inclusive, so the
+   post-flop display is clean); at t > 0 the historical pipeline
+   converges across exterior chambers (0/160 seeded fuzz failures) and
+   only the (1/2, 0) locus stalls (su2 ~ 0.7 at every t) — the ⚠
+   degraded caption covers that locus.
  5. IN PROGRESS (started 2026-09-13 without waiting, per the user's
     detailed spec message): moduli-space side view — a second display
     showing the global (r, θ, t) portrait of the hyperpolygon moduli:
@@ -558,6 +662,35 @@ Tracked work items from the user's planning call; keep statuses updated.
 
 ## Status / next milestone
 
+- DONE (2026-09-13): interior degenerate-locus fix (user bug report
+  "errors at (r,theta)=(0.5,0), e.g. beta=(0.5,0.5,0.8,0.25), jump to
+  something incorrect, many other chambers too"): the su(2) balancing
+  stalled at the locus for chamber-dependent subsets of betas (5.2e-2
+  for the user example, 5.0e-1 for a dominant leg-2 chamber) at every t
+  while neighbors solved — the widget's r/theta snaps land exactly on
+  the point. Fixed by the gated display-at-the-limit r-offset retry in
+  makeHyperpolygon (see the LOCUS FIX paragraph in the solver.js Files
+  entry). Full suite green: sweep/walls/sideview/edge/exterior/orient/
+  validate unchanged; new locus.mjs battery PASS (255 checks).
+- DONE (2026-09-13, user-verified same day "Looks great"): exterior-
+  chamber t = 0 branch (user request, same day): in exterior chambers
+  (beta_j >= sum of rest) the t = 0 slice is
+  empty for y = 0 and the old pipeline returned a stick with a gap
+  (su2 = beta_j - rest, usedStable); makeHyperpolygon now returns the
+  closed-form minimum energy state (y_j = 0 row, other y-rows nonzero
+  and tuned by (r,theta), exact stick) at t <= 0 — implemented as
+  exteriorPair/exteriorYDirection/dominantLeg in solver.js (see the
+  Files entry for the derivation and the two numerics gotchas). Wall
+  behavior per the user's spec: K = 0 exactly at the wall so enlarging
+  beta_j telescopes the stick taller with no jump (battery [C] sweeps
+  beta_0 across the wall; advances = (beta_0..beta_3) exactly at the
+  wall from both sides). t-continuity verified against the pipeline's
+  t -> 0+ limit to ~1e-11 per-leg norms at t = 1e-6 for all four
+  dominant legs. Two battery-found numerics fixes (aMag cancellation
+  form; Y[1][0] D-form) and one degenerate-locus rule ((1/2, 0)
+  re-evaluated at an r offset — the t > 0 pipeline stalls there at
+  every t, pre-existing). Full suite green: sweep/walls/sideview/edge/
+  orient/validate unchanged, new exterior.mjs PASS (1524 checks).
 - DONE (2026-09-13): third side-view feedback round (3 items): (1)
   PARAB_FOCAL 0.3 -> 0.1 ("even thinner"); (2) the exterior-sphere
   white highlight was DEAD since the first increment — the render loop
