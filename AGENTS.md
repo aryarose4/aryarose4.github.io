@@ -86,6 +86,44 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   unchanged); stalled points cost ~30-90 ms (browser: one-frame hitch
   at previously-broken points only). Regression-tested by walls.mjs
   [B2].
+  ENDPOINT FIX (2026-09-12, task 3): r=0 and r=1 used to JUMP — with the
+  widget's swapped beta, r=0 stalled the su(2) balancing at su2 ~2.5e-1
+  (closure marker visibly at 0.25) and r=1 stalled at ~1.5e-2, while
+  r=0.005/0.995 solve to ~1e-12. Root causes: (1) `fixMuU1`'s u root
+  `(-beta + sqrt(beta^2 + c*d))/d` suffers total cancellation when
+  c*d <<~ beta^2 * 2^-52 — d = |y_leg|^2 ~ r^2 near r=0 (u rounds to 0 ->
+  lam = 0 -> x scaled by 1/lam^2 = Infinity -> NaN at r=1e-12; garbage u,
+  muU1 ~1e-4, at r=1e-8..1e-6), and d ~ 1e-10 at the r=1 reff plateau.
+  Fixed with the algebraically identical cancellation-free form
+  `u = c / (beta + sqrt(beta^2 + c*d))` (forward-stable; d->0 limit
+  c/(2*beta) matches the d==0 branch); healthy solves change only in the
+  last ulps and sweep's worst mu_U1 improved 6.7e-10 -> 5.2e-15.
+  (2) At exactly r=0 the su(2) residual is a FLAT 0.25 plateau over the
+  whole (a12, b12, a22) fast-slice box (an orbit degeneration: x cols 0
+  and 3 coincide; NOT a Newton-basin issue — probed with a general
+  GL(2,C) random+refine search) — any tiny positive r-offset restores a
+  regular landscape. (3) At r=1 the historical reff = 1-1e-5 offset sits
+  inside a band where the balancing stalls at ~1.5e-2, and the residual
+  is a line-search pathology: with identical F and start, the max-norm
+  line search stalls at ~2.3e-1 while a Euclidean-norm line search
+  converges to ~1e-12. Fix: the balancing cascade is factored into
+  `balancedPair(x0, y0, beta)` (historical Newton -> stable-if-stalled ->
+  rescue, gate made NaN-safe; rescue gains start [-0.3,0.3,1] plus two
+  Euclidean-line-search Newton retries via an optional `norm` argument on
+  `newton`), and `makeHyperpolygon` adds gated endpoint retries: when
+  r <= 1e-5 or r > 1-1e-5 AND the primary solve is not clean
+  (su2 > 1e-6, NaN-safe; high end also on muC > 1e-9), the full cascade
+  re-runs on the consistent pair evaluated AT the offset point (x0 AND
+  y0 at reffAlt; offsets ~1e-9/1e-6 low end, 1e-6/1e-8 high end), keeping
+  the best pair. This display-at-the-limit evaluation zeroes the
+  documented mu_C ~1e-5 r=1 artifact (now <= 1.4e-17 across the endpoint
+  grid) and rescues the t=0 corners (T=0 zeroes the y-solve RHS, so
+  y-side retries alone are no-ops there). Healthy interior solves never
+  enter the retries; endpoint points cost ~20-115 ms once (accepted
+  one-frame-hitch class). The r=1 legacy spot in validate.mjs improved
+  (our su2 1.2e-11 -> 1.1e-16, muC 1e-5 -> 8.7e-19) with gauge-invariant
+  legacy diffs unchanged (3.84e-4 at the documented legacy-tolerance
+  spot). Regression-tested by the new edge.mjs endpoint battery.
 - `assets/js/hyperpolygon/orientation.js` — display-orientation servo,
   dependency-free ES module (read this before touching widget
   orientation). `makeOrientor()` returns `{ update(vertices, dt,
@@ -150,21 +188,22 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   midpoint of [prev, next]), `clampToChamber(beta)` (iterating clamp,
   sub-1e-11 moves count as converged for exact idempotency).
   Widget wiring: the beta state is the source of truth (defaults
-  1/6, 1/7, 1/7, 1/10, unclamped); on each input event it calls
+  0.5, 0.5, 0.5, 0.25, unclamped); on each input event it calls
   applyBetaDrag(i, beta, v, chamberShorts), re-syncs all four
   sliders/readouts/red-zones (the allowed span runs exactly TO the
   wall) and re-solves. The red blocked zones render as a
   linear-gradient on the custom-styled track (`.hp-slider` injected
   stylesheet, CSS custom properties --hp-lo/--hp-hi = allowed span in
   %; r/theta/t sliders share the styling with defaults 0%/100%). The
-  widget displays the 8 chamber inequalities as boxes below the beta
-  sliders (label "chamber (fixed):", one `hp-chamber-box` per
-  shortSubsets slot in order: the trivial "{} < {0,1,2,3}" dimmed,
-  then e.g. "{0,3} < {1,2}", 0-indexed to match the β₀..β₃ labels; a
+  widget displays the 7 nontrivial chamber inequalities as boxes below
+  the beta sliders (label "chamber (fixed):", one `hp-chamber-box` per
+  shortSubsets slot 1..7 in order — the trivial "{} < {0,1,2,3}" slot is
+  omitted, then e.g. "{0,3} < {1,2}", 0-indexed to match the β₀..β₃
+  labels; a
   tooltip shows the live subset sums), and a box gets the amber
   `hp-breaking` class while its inequality sits exactly on a wall —
-  the future "flop" hook (flopping split k = replacing shorts[k] by
-  its complement). CRITICAL widget detail:
+  and now hosts a small "Cross Wall" button while amber (the flop
+  action, see below). CRITICAL widget detail:
   solveAndDraw calls makeHyperpolygon(r, theta, t, [b0, b1, b3, b2],
   true) — legs 2/3 PRE-SWAPPED so the permuted returned pair satisfies
   mu_U1 = beta for the user's beta even when beta2 != beta3; when
@@ -172,6 +211,94 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   when beta2 leaves 1/7 and the default look is unchanged. A
   try/catch + NaN check around the solve shows a warning caption and
   freezes the last geometry instead of drawing garbage.
+  Widget additions (2026-09-12, tasks 1/2/4): (1) the four beta sliders
+  live in a dedicated grid row whose column count (4/2/1) is picked by a
+  ResizeObserver from the measured width (thresholds 700px/340px — a
+  flex-wrap row with a 170px basis produced the forbidden 3+1 layout; an
+  explicit column count can never orphan a slider). (2) "Scale β⃗ Down"/
+  "Scale β⃗ Up" buttons below the beta row (SCALE_DOWN_MIN = 0.02, see
+  the task list): down multiplies all four betas by 0.25 (fp-exact), up
+  by min(4, 1/max(beta)) with the largest weight pinned EXACTLY to 1
+  (x*(1/x) can land 1 ulp off — the pin fixes that); the whole state is
+  re-synced from the scaled tuple (no clamping — chambers are
+  scale-invariant); buttons disabled via syncScaleButtons() called from
+  syncBetaSliders() so drags update them too. (3) Each amber chamber box
+  carries a "Cross Wall" button: crossWall(k) replaces chamberShorts[k]
+  by its complement (adjacent chamber across that wall) and nudges beta
+  across the wall via nudgeAcross — grow the OLD short subset's legs by
+  eps = 5% of max(beta) in total (SEQUENTIAL fill: the first leg with
+  room takes the eps; uniform growth would slide along a coincident pair
+  wall and keep it breaking), falling back to shrinking the complement
+  legs (first leg first, floored at 0), with eps halving while the
+  candidate leaves the new chamber (validated by chamberInterval
+  containment for all four legs) and no nudge only in fully pinched
+  corners. After the flop every chamber box is rebuilt from
+   back. Crossing into a dominant chamber degrades small-t solves —
+   accepted known issue (see task list #4).
+- `assets/js/hyperpolygon/sideview.js` — moduli-space side view (task
+  list #5, first increment 2026-09-13), dependency-free ES module; Node
+  battery `dev/hyperpolygon/sideview.mjs`. Two layers: pure geometry +
+  probe (Node-safe, imported by the harness) and a browser-only
+  `makeSideView(host, opts)` three.js factory (returns null without
+  global THREE). The portrait: a WHITE central 2-sphere (radius
+  CENTRAL_RADIUS = 1 — PLACEHOLDER until the user supplies the
+  chamber-dependent area formula; single knob) with the black dot at
+  `spherePoint(r, theta)`: r = 0 is the south pole (0,-1,0), r = 1 the
+  north pole, theta = 0 the +x meridian, y = -cos(pi*r) (axis = three.js
+  +y, matching the polygon view's chord pin). THREE exterior 2-spheres
+  attach at (r,theta,t) = (0,0,0), (0.5,0,0), (1,0,0) — the r slider's
+  snap points with theta = 0 — externally tangent: center = attachment +
+  radius * outward normal. Which chamberShorts PAIR slot attaches where
+  is MEASURED at load by `probeExteriorMap` (3-6 widget-exact solves;
+  edge-parallelism sine residuals; retry at theta = 1e-4 escapes the
+  documented theta=0 stall basin): the slot map is chamber-INDEPENDENT,
+  [6, 5, 7] = south/equator/north — i.e. the splits {0,2}|{1,3},
+  {0,1}|{2,3}, {0,3}|{1,2} respectively, each attachment carrying THAT
+  chamber's short side (measured over 8 betas / 6 chambers, worst
+  residual 2.7e-6, runner-up margin >= 1:3.3e4; the widget fills any
+  null probe entry from the spare slots so all three spheres exist).
+  NOTE (measured, matches walls.mjs [E]): the widget's beta pre-swap and
+  the solver's permute=true cancel, so displayed polygon leg j IS user
+  leg j — no PERM conversion anywhere (PERM = [0,1,3,2] is exported only
+  as documentation of that identity). Exterior sphere size from the
+  user's formula: surface area = (pi/2)(sum_comp - sum_I) for I = the
+  mapped pair short => `pairRadius` = sqrt(D/8); sizes update live with
+  beta (scale buttons shrink/grow the bubbles); D -> 0 on a pair wall
+  shrinks a sphere away (radius floor 1e-9). Sphere appearance:
+  unhighlighted = transparent (opacity 0.16, soft blue-gray palette
+  tint), highlighted = opaque white with ~80 ms exponential lag when
+  flowState's exterior branch owns that attachment (sitting exactly ON
+  the attachment at t = 0 already highlights — branch selection only
+  checks r/theta, not t). Flow model (`flowState`, pure): exterior
+  branch iff (r, theta) sits on an attachment (poles accept ANY theta —
+  theta is degenerate on the sphere there; equator needs theta ~ 0; tol
+  1e-9 on the post-snap slider values): dot = center + rk*(-cos(a)n +
+  sin(a)w), climb angle a = pi*t, side w = yHat made tangent (fallback
+  +x at the poles) — the dot rides the attachment-to-antipode arc
+  (canonical meridian; the future level-circle slider will rotate it).
+  Central branch: the dot climbs the paraboloid z_local = rho^2/(2f)
+  KISSING the sphere at the dot's (r,theta) point, apex there, axis =
+  outward normal, opening outward/upward; phi(t) = atan(0.5 t/(1-t))
+  capped at 80 deg (constants PHI_K/PHI_CAP/PARAB_FOCAL = 0.6 — the
+  monotone t->arc map is a schematic choice, user-tunable); guide arc =
+  the +u meridian (u = yHat made tangent). Paraboloid visibility is the
+  WIDGET's decision: hovering the t slider OR t > 0 (spec item 3); the
+  exterior branch hides it (spec item 4). Branch CROSSING at the snap
+  boundary is a visible jump (exterior meridian vs paraboloid arc
+  differ) — accepted for this increment. Widget wiring: sideBox (320 px,
+  own OrbitControls + render loop) below the main canvas;
+  `refreshSide()` runs in the loop's pending block (same cadence as
+  solveAndDraw) and on t hover/focus; the side view uses the RAW t (1
+  allowed — the dot renders the t->infinity limit while the solve keeps
+  T_SOLVE_MAX); the "lim t->infty" button (spec item 5) lives in the
+  t-slider box and appears iff flowState.nearInfinity (exterior branch,
+  t >= T_NEAR_INF = 0.9) — click is a PLACEHOLDER (caption note),
+  behavior pending user spec. Battery: `sideview.mjs` [P] probe rule
+  (chamber-independent [6,5,7], strictly in-chamber tuples), [S] sizes,
+  [F] paraboloid constraint + t=0 continuity, [E] exterior-sphere
+  constraints (|dot-center| = rk exactly, endpoints attachment/antipode),
+  [N] NaN/degeneracy safety, [I] purity — 3439 checks, ~1.7 s; added to
+  run-validation.sh (copies sideview.js like the other modules).
 - `mathematica/` — reference notebooks and legacy data. Excluded from
   the Jekyll build; `mathematica/hyperpolygonData*` is gitignored
   (137 MB file, over GitHub's limit). `generateHyperpolygonData.wls`
@@ -180,7 +307,18 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   - `run-validation.sh` — copies the live solver + orientation.js +
     chambers.js in and runs everything
   - `sweep.mjs` — randomized robustness (200 pts x 3 beta sets)
-  - `edge.mjs` — r=1 edge cases
+  - `edge.mjs` — endpoint battery (222 checks, exit 1 on failure):
+    [A] endpoint grid r in {0,1} x theta {0,±π/2,±π} x t {0.1,0.5,0.99}
+    for BOTH call patterns (widget-exact swapped + unswapped): closure,
+    su2, muU1 < 1e-9 and muC < 1e-6 (the r=1 muC ~1e-5 artifact is
+    gone); [B] the formerly broken bands r ~ 1e-12..1e-6 and
+    0.99999..0.999999; [C] t=0 corners (y-side retries are no-ops
+    there); [D] gauge-invariant continuity of the endpoint polygon
+    against the r→0+/1- trends (vertex norms and per-leg |y|^2;
+    asserted at t <= 0.5 — near t~0.99 the r-slope of the invariants is
+    unbounded so a linear-trend check is invalid there, those endpoints
+    are covered by the residual bars); [E] the r=1 theta loop;
+    [F] 120-solve seeded band fuzz.
   - `walls.mjs` — chamber-wall battery: near-wall conditioning profile
     (asserts healthy >= WALL_MARGIN from any wall), t=0 in-chamber
     checks, clampToChamber fuzz (incl. on-wall starts + idempotency),
@@ -192,14 +330,26 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
     LOCKED: only the dragged leg moves, bit-exact; the tracked chamber
     never changes; in-span raws pass through bit-exactly, out-of-span
     raws pin exactly at a bound; re-apply is an exact no-op;
-    breakingSubsets nonempty iff the tuple is on-wall), and the
+    breakingSubsets nonempty iff the tuple is on-wall), the
     focused chamber-lock battery [H] (exact wall pins at both ends of
     slider 0, cross-drag slide-along along a wall, wall-contact
     release, 0-wall floor, chamberInterval vs the betaInterval
     bracket on 160 non-dominant (slider, beta) pairs, 60 fuzz walks x
     40 events with end-of-walk solves; pinned finals are relaxed to
     su2 <= 0.05 with best-of-3 draws — the theta=0 stall basin at
-    isolated draws). Exits 1 on failure.
+    isolated draws), the scale-button battery [S] (down-clicks bit-exact
+    x0.25, chamber held, on-wall state unchanged, healthy allowed spans
+    at the deepest reachable tuple — exactly 2 clicks from the defaults
+    before the 0.02 floor; up-clamp lands max exactly 1 incl. a
+    non-power-of-two tuple; grey-out rule spot checks; scaled-tuple
+    solves clean to f=1e-6), and the cross-wall battery [W] (flop flips
+    exactly one slot to its sorted complement; the coincident-wall pair
+    at b0=0.25 releases both inequalities after the sequential-fill
+    nudge; post-cross drags clamp into the NEW chamber with exact
+    wall pins and no-ops; cross-back restores the chamber;
+    dominant-chamber crossing keeps moderate-t solves clean with
+    best-of-3 theta draws; the beta0-at-1 no-room case shrinks the
+    complement instead). Exits 1 on failure.
   - `orient.mjs` — orientation battery (6 tests, 39 slider paths,
     ~9.5k solves, ~13 s): chord pinning, drag continuity vs a
     Kabsch-optimal shape baseline + exact-pinning reference, one-step
@@ -212,13 +362,20 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
 
 - `sweep.mjs`: worst su(2) residual ~1e-11, worst mu_U1 <= 1e-9,
   mu_C ~1e-15, slowest solve a few ms, stable path never needed.
-- `walls.mjs`: ~0.4 s runtime; [A2]/[B]/[B2]/[C]/[D]/[E]/[F]/[G]/[H]
-  all pass; near-wall profile shows no distance-dependence at moderate t
-  (walls matter through chamber confinement, not local conditioning);
-  [B2] worst t=0 residual ~1e-11 incl. the rescued repro point; [C]
-  3500/3500 idempotent, off-wall, in (0,1]; [G]/[H] chamber-locked drags
-  hold every invariant (min chamber slack >= -1e-15, idempotent, chamber
-  never changes) and on-wall finals solve to ~1e-11 at moderate t.
+- `edge.mjs`: PASS (222 checks); endpoint grid closures/su2/muU1 all
+  < 1e-9 and muC < 1e-6 at r in {0,1}; the formerly broken bands
+  (r ~ 1e-12..1e-6, 0.99999..0.999999) solve clean; continuity trend
+  errors ~1e-4 of polygon scale at t <= 0.5.
+- `walls.mjs`: ~0.4 s runtime; [A2]/[B]/[B2]/[C]/[D]/[E]/[F]/[G]/[H]/
+  [S]/[W] all pass; near-wall profile shows no distance-dependence at
+  moderate t (walls matter through chamber confinement, not local
+  conditioning); [B2] worst t=0 residual ~1e-11 incl. the rescued repro
+  point; [C] 3500/3500 idempotent, off-wall, in (0,1]; [G]/[H]
+  chamber-locked drags hold every invariant (min chamber slack >=
+  -1e-15, idempotent, chamber never changes) and on-wall finals solve
+  to ~1e-11 at moderate t; [S] exactly 2 down-clicks from the defaults
+  with spans >= 2*WALL_MARGIN at the floor; [W] post-cross solves clean
+  with best-of-3 theta draws.
 - `orient.mjs`: 6/6 PASS; typical worst values: pinning ~1e-8 (limit
   2e-3), continuity/jump-smoothness excess over the pinning-aware bound
   0 (raw solver motion dominates near t=0.99 — the battery reports the
@@ -231,6 +388,87 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
 - Browser perf budget: one solve must stay well under 10 ms so sliders
   can re-solve on every input event (orientor.update is O(9) and
   negligible next to the solve).
+
+## Task list (2026-09-12 planning call)
+
+Tracked work items from the user's planning call; keep statuses updated.
+
+1. DONE (2026-09-12, user-verified 2026-09-13): beta slider
+   layout: the four beta sliders lay out 4-per-row, 2-per-row, or
+   one-per-row depending on container width — NEVER 3+1 (the pre-fix
+   flex-wrap with 170px basis produced 3+1 at some widths). Widget-side
+   fix: a dedicated beta-slider grid row whose column count (4/2/1) is
+   picked by a ResizeObserver on its measured width (thresholds
+   700px/340px).
+2. DONE (2026-09-12, user-verified 2026-09-13): scale buttons
+   "Scale β⃗ Down" / "Scale β⃗ Up" below the beta sliders. Down
+   multiplies all four betas by 0.25 (exact in fp — power of two); Up
+   multiplies by min(4, 1/max(beta)) and pins the largest weight
+   EXACTLY to 1.0 (x*(1/x) can land 1 ulp off) so the tuple scales
+   exactly until the largest weight equals the slider limit. Scale Up
+   is greyed out once max(beta) >= 1-1e-12; Scale Down is greyed out
+   when scaling would push max(beta) below 0.02 — the floor exists
+   because chamberInterval's hard WALL_MARGIN = 0.003 0-wall floor
+   collapses the displayed allowed spans once the tuple scale
+   approaches ~2*WALL_MARGIN (at the floor the spans are still >=
+   2*WALL_MARGIN; exactly 2 down-clicks from the defaults). Chambers
+   are scale-invariant (the inequalities are homogeneous), so uniform
+   scaling never leaves the tracked chamber — asserted by the walls.mjs
+   [S] battery. Solver accuracy is NOT the limiter: measured su2 ~1e-12
+   for uniformly scaled betas down to f = 1e-9.
+3. DONE (2026-09-12, user-verified 2026-09-13): r=0 / r=1
+   endpoint jumps: at exactly r=0 (with the widget's swapped-beta
+   solve) the su(2) balancing stalled at su2 ~ 2.5e-1 and the closure
+   marker jumped to ~0.25, and r=1 stalled at ~1.5e-2 — while
+   r=0.005/0.995 solve to ~1e-12, so the slider endpoints jumped.
+   Diagnosis + fix recorded in the solver.js entry: (a) total
+   cancellation in fixMuU1's u root for tiny d = |y_leg|^2, fixed by the
+   cancellation-free root u = c/(beta + sqrt(beta^2 + c*d)); (b) r=0 is
+   an orbit degeneration (FLAT 0.25 residual plateau, not a basin), so
+   the endpoint display is evaluated at a consistent offset point
+   (x0 AND y0 at reffAlt ~1e-9/1e-6); (c) r=1's reff = 1-1e-5 sits in a
+   stall band and the residual is a line-search pathology — fixed by
+   Euclidean-norm Newton retries plus reff-adaptive retries
+   (1e-6/1e-8), all gated on su2 > 1e-6 so healthy solves keep the
+   identical historical path; the documented mu_C ~1e-5 r=1 artifact is
+   gone (<= 1.4e-17 across the endpoint grid). Regression battery: the
+   rewritten edge.mjs (222 checks).
+4. DONE (2026-09-12, user-verified 2026-09-13): Cross Wall
+   button: while a chamber box is amber (its inequality exactly on a
+   wall), a clickable "Cross Wall" button appears in that box. Clicking
+   flops that split — chamberShorts[k] is replaced by its complement —
+   and nudges beta across the wall into the new chamber (eps = 5% of
+   max(beta), SEQUENTIAL fill over the old short subset's legs —
+   uniform growth would slide along a coincident pair wall and keep it
+   breaking — clamped to the [0,1] slider bounds; falls back to
+   shrinking the complement legs when the short side has no room, e.g.
+   beta0 at 1; eps halves while the candidate leaves the new chamber;
+   no nudge only in fully pinched corners). Subsequent drags clamp into
+   the NEW chamber; dragging back to the wall re-highlights it and
+   allows crossing back. KNOWN ISSUE, deliberately left per user
+   instruction (2026-09-12): crossing an "odd" wall like {0} < {1,2,3}
+   lands in a dominant chamber, where the balanced representative
+   degenerates for small t (su2 up to ~0.4 at t <~ 0.01) — do not
+   address until the
+   user gives instructions; the ⚠ degraded caption covers the interim.
+ 5. IN PROGRESS (started 2026-09-13 without waiting, per the user's
+    detailed spec message): moduli-space side view — a second display
+    showing the global (r, θ, t) portrait of the hyperpolygon moduli:
+    the "core" of hyperpolygon space, a central 2-sphere with three
+    exterior 2-spheres attached, and a way to "flow" upward from the
+    central sphere or up along an exterior sphere (the upward/Higgs-flow
+    directions of the hyperkähler isometry torus). FIRST INCREMENT DONE
+    (2026-09-13, user-verified same day: "It looks perfect!"): items
+    (1)-(5) of the
+    user's spec are implemented — central sphere + t=0 dot at (r,theta);
+    three exterior spheres at (0,0), (0.5,0), (1,0) (t=0) with
+    transparency/highlight and the beta-dependent area formula
+    (pi/2)(sum_comp - sum_I); hover-t paraboloid + t-driven central-branch
+    arc; exterior-branch climb toward the antipode as t -> infinity; the
+    lim t→∞ button appears near t >= 0.9 on an exterior sphere (click
+    PLACEHOLDER). Central-sphere area formula still owed by the user
+    (CENTRAL_RADIUS placeholder); future level-circle slider owed; see
+    the sideview.js Files entry for all measured/canonical choices.
 
 ## Status / next milestone
 
@@ -261,10 +499,19 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   polygon while the readout still says "t→∞".
 - NEXT: milestone 3b remainder = optional SL(2,C) real/imaginary
   polygon views, short math explanation on the project page,
-  purgecss/build polish; then the planned chamber-"flop" interaction
-  (deliberate wall-crossing by flipping a breaking inequality — the UI
-  hooks are in place: breakingSubsets + the highlighted chamber boxes).
-- DONE (2026-09-12, user visual verification PENDING): chamber LOCK +
+  purgecss/build polish. The moduli-space side view (Task list #5) is
+  IN PROGRESS: first increment implemented AND user-verified 2026-09-13
+  ("It looks perfect!", sideview.js + sideview.mjs, see the Files
+  entry); next side-view increments: the level-circle slider, the
+  user's central-area formula, the lim t→∞ behavior. The
+  chamber-"flop" interaction (planning-call task 4)
+  is DONE as of 2026-09-12. Accepted known issues (do not fix without
+  the user asking): (a) dominant-chamber small-t degeneracy behind the
+  Cross Wall flop (Task list #4); (b) the theta=0 stall basin at
+  isolated near-wall tuples (e.g. the post-cross tuple in walls.mjs
+  [W](b) stalls at su2 ~2.5e-2 at exactly theta=0 while other theta
+  solve to ~1e-13) — the ⚠ degraded caption covers both.
+- DONE (2026-09-12, user-verified 2026-09-13): chamber LOCK +
   short-subset tracking, replacing "snap and ride" the same day (user
   call: dragging along a wall caused accidental chamber flops;
   deliberate crossing returns later as the explicit flop). chambers.js
@@ -285,7 +532,7 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   complete, which also fixed [B]'s dominant-chamber INFO bracket).
   Known coincidence: with beta1 = beta2 exactly (the defaults), the
   lower wall of slider 0 is TWO pair walls at once ({2,3}|{0,1} and
-  {1,3}|{0,2} both at b0 = 0.1) — pinning there breaks both
+  {1,3}|{0,2} both at b0 = 0.25) — pinning there breaks both
   inequalities and both boxes highlight ([H](a2) asserts the pair).
   walls.mjs [G] rewritten (800 drag events: chamber invariant, leg
   isolation, exact pin/no-op, breaking⟺on-wall per event) and [H]
@@ -297,7 +544,7 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   validate.mjs legacy diffs unchanged (max 3.83e-4 at the documented
   r=1, t~0.5 legacy-tolerance spot).
 - DONE (2026-09-12, SUPERSEDED the same day by the chamber lock above,
-  user visual verification PENDING): "snap and ride" beta-slider
+  user-verified 2026-09-13): "snap and ride" beta-slider
   mechanic per the user's design (replaced the hard wall
   clamps of the first 3b cut — see the chambers.js entry): dragging
   into the red zone still pins the weight at the wall edge, but
@@ -353,13 +600,27 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   scale dips 30 -> 0.31 -> 7 over Δr≈0.01 around r≈0.5; residuals
   ~1e-15, θ=0 cancellation), NOT an orientation artifact. Also DONE:
   `permute` option in makeHyperpolygon (see Files section).
+- DONE (2026-09-12, user-verified 2026-09-13): planning-call
+  tasks 1-4 (see the Task list for per-task facts): beta slider row
+  layout (grid + ResizeObserver, never 3+1), Scale β⃗ Down/Up buttons
+  with grey-out rules, r=0/r=1 endpoint fixes in the solver
+  (cancellation-free u root + balancedPair refactor + gated
+  display-at-the-limit endpoint retries; the r=1 mu_C ~1e-5 artifact is
+  gone), and the Cross Wall flop button (sequential-fill nudge,
+  complement-shrink fallback). Full suite green after the changes:
+  sweep worst su2 1.38e-11 / worst mu_U1 1.43e-14 / slowest 7 ms;
+  walls PASS 355 ms incl. the new [S]/[W]; edge PASS (222 checks);
+  orientation 6/6; validate.mjs gauge-invariant legacy diffs unchanged
+  (max 3.84e-4 at the documented legacy-tolerance spot) with our r=1
+  residuals improved to ~1e-16. Task 5 (moduli-space side view) is
+  PLANNED only.
 
 ## Dev environment gotchas
 
-- Start the preview with `bundle exec jekyll serve --host 0.0.0.0 --port
-  4000` (takes ~25 s to build; page then at
-  http://localhost:4000/projects/hyperpolygon_moduli_spaces/). Use the
-  background_process tool, ready on port 4000.
+- Start the preview via the `/serve` command (`.kilo/command/serve.md`):
+  `bundle exec jekyll serve --host 0.0.0.0 --port 8080` (takes ~25 s to
+  build; page then at http://localhost:8080/projects/hyperpolygon_moduli_spaces/).
+  Use the background_process tool, ready on port 8080.
 - The serve watcher does NOT pick up asset-only edits reliably: after
   editing anything under assets/, restart the jekyll server and wait for
   the rebuild (~25 s).
