@@ -26,8 +26,15 @@
 //      mu_U1 = beta exactly. Per leg: c/u - d u = 2 beta with
 //      u = lam^4, c = |x_leg|^2, d = |y_leg|^2.
 //   4. Newton (or a cyclic 1-D minimization fallback) on the three
-//      real parameters (a12, b12, a22) of A = [[1, a12+i b12],[0, a22^2]]
+//      real parameters (a12, b12, a22) of A = [[1, a12 + i b12],[0, a22^2]]
 //      so that the su(2) coordinates of mu_SU2 vanish after fixMuU1.
+//
+// Exterior branch (dominant chamber, t = 0): when one beta >= the sum of the
+// rest, the t = 0 slice has no y = 0 solution (the tight-frame inequality
+// fails) and the historical pipeline stalls at a stick with a gap. The
+// t -> 0+ limit of the genuine t > 0 solutions is instead constructed in
+// closed form below (exteriorPair) and returned at t = 0; see the section
+// comment for the derivation.
 //
 // Complex numbers are 2-element arrays [re, im].
 
@@ -140,13 +147,14 @@ function solveComplexLinear(M, b) {
   return u;
 }
 
-// Solves mu_C(x, y) = 0 and mu_SL(x, y) = 0 for the 7 free entries of y
-// (order y11, y12, y21, y22, y31, y32, y41) with y42 = t/(1-t) prescribed,
-// then scales the whole y by (1 - reff). x must be built at reff.
-export function solveY(x, reff, t) {
-  const T = t / (1 - t);
+// The 7x7 complex linear system of the y-solve: mu_C(x, y) = 0 and
+// mu_SL(x, y) = 0 for the 7 free entries of y (order y11, y12, y21, y22,
+// y31, y32, y41) with y42 prescribed. With y42 = T the right-hand side is
+// exactly T * b1 (the system is linear in T), so the solve is linear in T.
+// Returns [M, b1].
+function ySolveSystem(x) {
   const M = Array.from({ length: 7 }, () => Array.from({ length: 7 }, () => C(0)));
-  const b = Array.from({ length: 7 }, () => C(0));
+  const b1 = Array.from({ length: 7 }, () => C(0));
   // mu_C rows
   M[0][0] = x[0][0];
   M[0][1] = x[1][0];
@@ -155,7 +163,7 @@ export function solveY(x, reff, t) {
   M[2][4] = x[0][2];
   M[2][5] = x[1][2];
   M[3][6] = x[0][3];
-  b[3] = cScale(x[1][3], -T);
+  b1[3] = cScale(x[1][3], -1);
   // mu_SL rows M11, M12, M21 (M22 is dependent on mu_C and M11)
   M[4][0] = x[0][0];
   M[4][2] = x[0][1];
@@ -164,11 +172,21 @@ export function solveY(x, reff, t) {
   M[5][1] = x[0][0];
   M[5][3] = x[0][1];
   M[5][5] = x[0][2];
-  b[5] = cScale(x[0][3], -T);
+  b1[5] = cScale(x[0][3], -1);
   M[6][0] = x[1][0];
   M[6][2] = x[1][1];
   M[6][4] = x[1][2];
   M[6][6] = x[1][3];
+  return [M, b1];
+}
+
+// Solves mu_C(x, y) = 0 and mu_SL(x, y) = 0 for the 7 free entries of y
+// (order y11, y12, y21, y22, y31, y32, y41) with y42 = t/(1-t) prescribed,
+// then scales the whole y by (1 - reff). x must be built at reff.
+export function solveY(x, reff, t) {
+  const T = t / (1 - t);
+  const [M, b1] = ySolveSystem(x);
+  const b = b1.map((v) => cScale(v, T));
   const u = solveComplexLinear(M, b);
   if (!u) return null;
   const s = 1 - reff;
@@ -177,6 +195,50 @@ export function solveY(x, reff, t) {
     [cScale(u[2], s), cScale(u[3], s)],
     [cScale(u[4], s), cScale(u[5], s)],
     [cScale(u[6], s), cScale(C(T), s)],
+  ];
+}
+
+// Direction of the y-solve in T: solveY(x, reff, t) = (1-reff) * t/(1-t) * Y
+// EXACTLY (the system is linear in T), so Y is the T-derivative direction.
+// For the normal form x = buildX(reff, theta, beta0) it has the exact zeros
+// Y[0][0] = 0 (row 0, col 0) and Y[1][1] = 0 (row 1, col 1), and its (3,1)
+// entry is exactly 1. Used by the exterior branch below.
+export function ySolveDirection(x) {
+  const [M, b1] = ySolveSystem(x);
+  const u = solveComplexLinear(M, b1);
+  if (!u) return null;
+  return [
+    [u[0], u[1]],
+    [u[2], u[3]],
+    [u[4], u[5]],
+    [u[6], C(1)],
+  ];
+}
+
+// Closed form of the same direction for the normal form x =
+// buildX(reff, theta, beta0), obtained by back-substituting the system by
+// hand (the normal form's zeros x[1][0] = x[0][1] = 0 make it triangular).
+// Algebraically identical to ySolveDirection(buildX(...)) but free of the LU
+// conditioning loss at the r endpoints (where entries of Y reach ~1/(1-reff)
+// ~ 1e5 and the solve residual would sit at ~1e-11 instead of roundoff).
+export function exteriorYDirection(reff, theta, beta0) {
+  const e = [Math.cos(theta), Math.sin(theta)];
+  const re = [reff * e[0], reff * e[1]]; // reff e^{i theta}
+  const s = Math.sqrt(2 * beta0);
+  // D = reff e^{i theta} - (1 - reff): the small quantity of the (1/2, 0)
+  // degeneracy. Y[1][0] is written as reff e^{i theta} * D / (1 - reff) —
+  // algebraically identical to reff^2 e^{2i theta}/(1-reff) - reff e^{i theta}
+  // but free of the O(ulp(1/2)) absolute cancellation error that the direct
+  // form suffers near reff = 1/2 (that error is amplified by the 1/sqrt(wMax)
+  // of the weight normalization and showed up as a ~1e-10 central mu_C
+  // residual at the nudged degenerate locus).
+  const D = cSub(re, C(1 - reff));
+  const y10 = cScale(cMul(re, D), 1 / (1 - reff));
+  return [
+    [C(0), cScale(D, 1 / s)],
+    [y10, C(0)],
+    [re, cScale(re, -1)],
+    [cScale(re, -1 / (1 - reff)), C(1)],
   ];
 }
 
@@ -602,7 +664,176 @@ function swapLegs23(x, y) {
   return [xs, ys];
 }
 
-// Master switch for the beta legs 2 <-> 3 widget permutation (the widget's
+// ===== Exterior branch (dominant chamber, t = 0) =====
+//
+// When one parabolic weight dominates, beta_j >= sum_{i != j} beta_i, the
+// t = 0 moduli slice is empty for the y = 0 representative (mu_SU2 = 0 needs
+// sum_i x_i x_i^dagger to be a scalar matrix, which forces the tight-frame
+// inequality beta_i <= sum_{k != i} beta_k). The t -> 0+ limit of the genuine
+// t > 0 solutions instead converges to a "minimum energy" configuration with
+// y_j = 0 and the remaining y-rows nonzero, which satisfies ALL moment map
+// equations exactly. This section constructs that limit in closed form;
+// makeHyperpolygon returns it at t = 0 in exterior chambers.
+//
+// Form (up to the residual gauge): the dominant leg j keeps an axis vector
+// x_j = sqrt(2 beta_j) * e_a, every other column of x is parallel to the
+// orthogonal axis e_b, y_j = 0, and every other row of y is parallel to e_a.
+// Writing c_i, alpha_i for the surviving magnitudes, the moment map
+// equations reduce to
+//   |c_i|^2 - |alpha_i|^2 = 2 beta_i            (mu_U1, per leg)
+//   sum_{i != j} c_i alpha_i = 0                (central mu_C)
+//   sum_{i != j} (|c_i|^2 + |alpha_i|^2) = 2 beta_j   (mu_SU2)
+// With S_i := sqrt(beta_i^2 + K w_i) the solution is
+//   |c_i|^2 = beta_i + S_i,  |alpha_i|^2 = S_i - beta_i,
+// where K >= 0 is the unique root of sum_{i != j} S_i = beta_j (monotone in
+// K; K = 0 exactly on the wall beta_j = sum_{i != j} beta_i, so the branch
+// telescopes smoothly out of the wall stick as beta_j grows). The
+// (r, theta) dependence enters through the direction weights
+//   w_i = |xdir_i|^2 |ydir_i|^2
+// and the phases arg c_i = arg xdir_i, arg alpha_i = arg ydir_i, where the
+// directions are read off the t -> 0+ asymptotics of the balanced pipeline:
+//   pattern A (j = 0):  xdir_i = x0[1][i],          ydir_i = Y[i][0]
+//   pattern B (j > 0):  xdir_i = x0[0][i] + a* x0[1][i]
+//                       ydir_i = Y[i][1] - a* Y[i][0]
+// with x0 = buildX(reff, theta, beta0), Y = ySolveDirection(x0) and
+// a* = Y[j][1] / Y[j][0] chosen so the dominant leg's ydir vanishes
+// (a* = 0 for j = 1, -1 for j = 2, -(1-reff) e^{-i theta} / reff for j = 3).
+// Both patterns make sum_i xdir_i ydir_i = 0 an identity (all four sums
+// sum_i x0[r][i] Y[i][c] vanish), so the central mu_C holds automatically.
+// The S_i are invariant under a common rescaling of the w_i, which the
+// K-solve exploits for normalization (and which makes the r -> 0 and
+// r -> 1 limits of the weights tame).
+
+// Index of the dominant leg (beta_j >= sum of the rest, wall inclusive up to
+// a 1e-12 slack so a one-ulp-below-wall tuple still takes the branch), or -1
+// if no leg dominates (the stable chamber, where the historical path runs).
+export function dominantLeg(beta) {
+  let j = 0;
+  for (let i = 1; i < 4; i++) if (beta[i] > beta[j]) j = i;
+  let rest = 0;
+  for (let i = 0; i < 4; i++) if (i !== j) rest += beta[i];
+  return beta[j] >= rest - 1e-12 ? j : -1;
+}
+
+// The balanced exterior-branch pair (x, y) at (r, theta), t = 0, for the
+// dominant leg j (as returned by dominantLeg). Solves mu_C = 0, the central
+// complex moment map, mu_U1 = beta and mu_SU2 = 0 to roundoff.
+export function exteriorPair(r, theta, beta, j) {
+  // Display at the limit: floor reff at 1e-9 (at r = 0 every Y[i][0]
+  // vanishes for pattern A and the K-solve would degenerate; the limit is
+  // smooth and 1e-9 is far below display precision), cap at 1 - 1e-5 as
+  // everywhere else.
+  const reff = Math.min(Math.max(r, 1e-9), 1 - 1e-5);
+  let pair = exteriorPairAt(reff, theta, beta, j);
+  if (pair !== null) return pair;
+  // Degenerate direction weights: at (r, theta) = (1/2, 0) every Y-entry
+  // combination in the pattern-B directions vanishes identically (the
+  // y-solve direction itself degenerates to second order there; the whole
+  // t > 0 pipeline stalls at this locus too, at every t). Re-evaluate at a
+  // tiny r offset: along the theta = 0 row the weights behave like
+  // w_0 ~ w_1 ~ (r - 1/2)^2 and w_3 ~ (r - 1/2)^4, so the offset result is
+  // the continuous extension of the theta = 0 row and matches the
+  // pipeline's converged behavior next to the point.
+  for (let nudge = 1e-7; nudge <= 1e-3; nudge *= 10) {
+    pair = exteriorPairAt(Math.min(reff + nudge, 1 - 1e-5), theta, beta, j);
+    if (pair !== null) return pair;
+  }
+  return null;
+}
+
+function exteriorPairAt(reff, theta, beta, j) {
+  const x0 = buildX(reff, theta, beta[0]);
+  const Y = exteriorYDirection(reff, theta, beta[0]);
+  const x01 = [C(0), C(1), C(1), x0[1][3]];
+  const x00 = [x0[0][0], C(0), C(1), x0[0][3]];
+  const xdir = [];
+  const ydir = [];
+  if (j === 0) {
+    for (let i = 0; i < 4; i++) {
+      xdir.push(x01[i]);
+      ydir.push(Y[i][0]);
+    }
+  } else {
+    const a =
+      cAbs2(Y[j][0]) < 1e-300 ? C(0) : cDiv(Y[j][1], Y[j][0]);
+    for (let i = 0; i < 4; i++) {
+      xdir.push(cAdd(x00[i], cMul(a, x01[i])));
+      ydir.push(cSub(Y[i][1], cMul(a, Y[i][0])));
+    }
+  }
+  const idx = [0, 1, 2, 3].filter((i) => i !== j);
+  const w = idx.map((i) => cAbs2(xdir[i]) * cAbs2(ydir[i]));
+  const wMax = Math.max(...w);
+  if (!(wMax > 0) || !isFinite(wMax)) return null; // degenerate locus: caller nudges
+  const what = w.map((v) => v / wMax);
+  // K-solve: sum_i sqrt(beta_i^2 + K what_i) = beta_j, monotone in K.
+  // what is w normalized to max 1; the S_i only see the product K * what.
+  let rest = 0;
+  for (const i of idx) rest += beta[i];
+  const target = Math.max(beta[j], rest);
+  let K = 0;
+  if (target > rest + 1e-15) {
+    const g = (K) =>
+      idx.reduce((s, i, k) => s + Math.sqrt(beta[i] * beta[i] + K * what[k]), 0) -
+      target;
+    let lo = 0;
+    let hi = 1;
+    while (g(hi) < 0 && hi < 1e200) hi *= 2;
+    for (let it = 0; it < 100 && hi - lo > 1e-16 * hi; it++) {
+      const mid = 0.5 * (lo + hi);
+      if (g(mid) < 0) lo = mid;
+      else hi = mid;
+    }
+    K = 0.5 * (lo + hi);
+  }
+  // Surviving magnitudes and phases.
+  const c = [];
+  const al = [];
+  idx.forEach((i, k) => {
+    const S = Math.sqrt(beta[i] * beta[i] + K * what[k]);
+    const cMag = Math.sqrt(beta[i] + S);
+    // aMag = sqrt(S - beta_i), evaluated in the cancellation-free form
+    // sqrt(K what / (beta + S)): the direct form rounds S - beta_i to 0
+    // when K what is below ulp(beta_i^2) (e.g. r = 0, where the direction
+    // weights span 18 orders of magnitude), which would drop that leg's
+    // term of the central moment map identity sum c_i alpha_i = 0 while the
+    // other legs keep their ulp-level contamination — a residual ~1e-10.
+    const aMag = Math.sqrt((K * what[k]) / (beta[i] + S));
+    const xd2 = cAbs2(xdir[i]);
+    const yd2 = cAbs2(ydir[i]);
+    c[i] = xd2 < 1e-300 ? C(cMag) : cScale(xdir[i], cMag / Math.sqrt(xd2));
+    al[i] = aMag === 0 || yd2 < 1e-300 ? C(0) : cScale(ydir[i], aMag / Math.sqrt(yd2));
+  });
+  // Assemble the balanced pair.
+  const x = [
+    [C(0), C(0), C(0), C(0)],
+    [C(0), C(0), C(0), C(0)],
+  ];
+  const y = [
+    [C(0), C(0)],
+    [C(0), C(0)],
+    [C(0), C(0)],
+    [C(0), C(0)],
+  ];
+  if (j === 0) {
+    x[0][0] = C(Math.sqrt(2 * beta[0]));
+    for (const i of idx) {
+      x[1][i] = c[i];
+      y[i][0] = al[i];
+    }
+  } else {
+    const ph2 = cAbs2(x01[j]);
+    const ph = ph2 < 1e-300 ? C(1) : cScale(x01[j], 1 / Math.sqrt(ph2));
+    x[1][j] = cScale(ph, Math.sqrt(2 * beta[j]));
+    for (const i of idx) {
+      x[0][i] = c[i];
+      y[i][1] = al[i];
+    }
+  }
+  return [x, y];
+}
+
+
 // pre-swap of beta plus this module's permute=true output swap, which cancel
 // in the display). Set FALSE to disable the permutation: callers then pass
 // beta unchanged and permute = false, so the returned (x, y) is the solved
@@ -622,6 +853,32 @@ export const PERMUTE_23 = true;
 // Callers that pair permute = true with a pre-swapped beta should gate both
 // on PERMUTE_23 (see widget.js / sideview.js) so the swaps cancel together.
 export function makeHyperpolygon(r, theta, t, beta, permute = true) {
+  // Exterior branch: in a dominant chamber (one beta >= the sum of the rest)
+  // the t = 0 slice has no y = 0 solution; return the closed-form minimum
+  // energy configuration instead (see the exterior-branch section above).
+  // For t > 0 the historical pipeline below already converges and its
+  // t -> 0+ limit IS this configuration, so the display is continuous.
+  const dom = dominantLeg(beta);
+  if (dom >= 0 && t <= 0) {
+    const branchPair = exteriorPair(r, theta, beta, dom);
+    if (branchPair !== null) {
+      const su2b = muSU2Coords(branchPair[0], branchPair[1]);
+      const [xd, yd] = permute ? swapLegs23(branchPair[0], branchPair[1]) : branchPair;
+      return {
+        x: xd,
+        y: yd,
+        vertices: hyperpolygonVertices(xd, yd),
+        sl2: sl2Vertices(xd, yd),
+        accuracy: {
+          su2Norm: Math.hypot(su2b[0], su2b[1], su2b[2]),
+          muU1Error: muU1Error(branchPair[0], branchPair[1], beta),
+          muCNorm: Math.max(...muC(branchPair[0], branchPair[1]).map(cAbs2)) ** 0.5,
+          usedStable: false,
+        },
+      };
+    }
+  }
+
   const reff = Math.min(r, 1 - 1e-5);
   const ySolveX = buildX(reff, theta, beta[0]);
   const y0 = solveY(ySolveX, reff, t);
@@ -667,6 +924,50 @@ export function makeHyperpolygon(r, theta, t, beta, permute = true) {
       const [cand] = balancedPair(x0Alt, y0Alt, beta);
       if (cand !== null && pairBetter(cand, pair)) {
         pair = cand;
+      }
+    }
+  }
+
+  // Degenerate-locus retries at (r, theta) = (1/2, 0), i.e. where the
+  // parallelism defect of x columns 2 and 3, D = r e^{i theta} - (1 - r),
+  // vanishes (columns (1,1) and (1-r, r e^{i theta}) become parallel exactly
+  // there). For betas whose balanced representative requires the two columns
+  // separated, the balancing family cannot represent it at the locus at all:
+  // the fast-slice action keeps col2' - col3' = a22^2 (col2 - col3) = 0 and
+  // the torus acts per leg, so every reachable representative keeps the
+  // columns parallel and the su(2) residual has a positive infimum —
+  // measured: every start (Newton, stable fallback, all rescues) stalls at
+  // the SAME beta-dependent value (5.2e-2 for beta = (0.5,0.5,0.8,0.25),
+  // 5.0e-1 for a dominant leg-2 chamber) at EVERY t, while the widget's
+  // default beta has a parallel-columns representative and never stalls.
+  // Just off the locus the tiny column angle is amplified through a
+  // near-cancellation inside the A-action, so neighbors solve — but the
+  // basin is chaotic for |D| <~ 1e-6 (stalls observed up to |D| ~ 6e-7,
+  // clean from ~1.5e-6). So when the solve is not fully converged and
+  // (r, theta) sits at the locus (gate 1e-4, 100x beyond the observed
+  // band), re-run the whole cascade on the consistent pair evaluated at
+  // r = 0.5 +- 1e-4 (ladder to 1e-3; the nudge side follows r so the
+  // display continues the row the user is on). The retry trigger is 1e-9
+  // (not the 1e-6 rescue gate): the true branch solves to ~1e-12
+  // throughout the gate disk, so anything above 1e-9 is stall debris —
+  // triggering on it makes the whole disk uniformly clean instead of
+  // leaving a chaotically-varying 1e-10..1e-6 band. Display-at-the-limit evaluation again: the returned pair
+  // solves every moment map equation exactly at (rAlt, theta, t) and its
+  // polygon invariants match the neighboring true branch to ~2e-6 (measured
+  // at 1e-4 offset; the r-slope of the invariants is ~0.01 there). Clean
+  // solves never enter this branch; the break keeps the snap point
+  // (the widget parks at r = 0.5, theta = 0) to one extra cascade.
+  const locusD = Math.hypot(r * Math.cos(theta) - (1 - r), r * Math.sin(theta));
+  if (locusD <= 1e-4 && !(su2NormOf(pair) <= 1e-9)) {
+    for (const off of [1e-4, 1e-3]) {
+      const rAlt = r <= 0.5 ? 0.5 - off : 0.5 + off;
+      const x0Alt = buildX(rAlt, theta, beta[0]);
+      const y0Alt = solveY(x0Alt, rAlt, t);
+      if (!y0Alt) continue;
+      const [cand] = balancedPair(x0Alt, y0Alt, beta);
+      if (cand !== null && pairBetter(cand, pair)) {
+        pair = cand;
+        if (su2NormOf(pair) <= 1e-9) break;
       }
     }
   }

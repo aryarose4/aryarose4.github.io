@@ -11,5 +11,7 @@ node sweep.mjs
 node walls.mjs
 node sideview.mjs
 node edge.mjs
+node locus.mjs
+node exterior.mjs
 node orient.mjs
 node validate.mjs
