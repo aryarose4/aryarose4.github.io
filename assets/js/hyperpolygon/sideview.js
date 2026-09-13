@@ -6,21 +6,41 @@
 // branch), or rides an exterior sphere from its attachment point toward
 // the antipode as t grows (exterior branch).
 //
-// All label/index math is in USER leg indexing: with the widget-exact
-// call (makeHyperpolygon(r, theta, t, [b0, b1, b3, b2], true)) the
-// widget's beta pre-swap and the solver's output swap cancel, so a
-// displayed polygon leg index j IS user beta leg j (see the PERM note
-// below and the walls.mjs [E] regression).
+// All label/index math is in USER leg indexing: under EITHER widget call
+// pattern — the PERMUTE_23 = true pattern (makeHyperpolygon(r, theta, t,
+// [b0, b1, b3, b2], true), where the widget's beta pre-swap and the solver's
+// output swap cancel) or the current PERMUTE_23 = false pattern (beta
+// unchanged, permute = false) — a displayed polygon leg index j IS user
+// beta leg j (see the PERM note below and the walls.mjs [E] regression).
 //
 // Dependency-free ES module. Node-safe: THREE is only touched inside
 // makeSideView (browser-only), guarded like widget.js guards its setup —
 // the pure geometry above it never references THREE.
 
-import { makeHyperpolygon } from "./solver.js";
+import { makeHyperpolygon, PERMUTE_23 } from "./solver.js";
 
-// Placeholder radius of the central 2-sphere. Single knob until a
-// chamber-dependent area formula replaces it.
-export const CENTRAL_RADIUS = 1;
+// Central 2-sphere size from the user's formula (2026-09-13; the absolute
+// value added the same day per the user's correction — z_max - z_min can be
+// NEGATIVE, exactly when a leg is dominant, and the area is its magnitude,
+// so the central sphere never vanishes on that account). All in USER leg
+// indexing (which is the displayed indexing under EITHER PERMUTE_23
+// setting, so the formula is insensitive to that flag — no conversion is
+// ever applied to beta in this module):
+//   z_max = min(|b0 + b3|, |b1 + b2|)
+//   z_min = max(|b3 - b0|, |b2 - b1|)
+//   tau_central = (PI/2) * |z_max - z_min|,  radius = sqrt(tau / (4 PI)).
+export function centralArea(beta) {
+  const zMax = Math.min(Math.abs(beta[0] + beta[3]), Math.abs(beta[1] + beta[2]));
+  const zMin = Math.max(Math.abs(beta[3] - beta[0]), Math.abs(beta[2] - beta[1]));
+  return (Math.PI / 2) * Math.abs(zMax - zMin);
+}
+
+// Central-sphere radius from the area: area = 4 PI r^2. The 1e-9 floor
+// guards degenerate corners where z_max = z_min exactly.
+export function centralRadius(beta) {
+  const r = Math.sqrt(centralArea(beta) / (4 * Math.PI));
+  return r >= 1e-9 ? r : 1e-9;
+}
 
 // The three exterior-sphere attachment points, all on the theta = 0
 // (+x) meridian: (r, theta, t) = (0, 0, 0) south pole, (0.5, 0, 0)
@@ -31,8 +51,10 @@ export const attachmentRs = [0, 0.5, 1];
 // gently (PHI_K = 0.5 puts phi ~ 0.46 rad at t = 0.5) and saturates at
 // PHI_CAP = 80 deg near t ~ 0.92, so the dot stops climbing before the
 // paraboloid gets cartoonishly steep. PARAB_FOCAL sets the scale:
-// surface z_local = rho^2 / (2 * PARAB_FOCAL) above the apex.
-export const PARAB_FOCAL = 0.6;
+// surface z_local = rho^2 / (2 * PARAB_FOCAL) above the apex. 0.6 -> 0.3
+// on user request (2026-09-13), then 0.3 -> 0.1 ("even thinner") the same
+// day: the drawn paraboloid radius is rhoMax = PARAB_FOCAL * tan(PHI_CAP).
+export const PARAB_FOCAL = 0.1;
 export const PHI_K = 0.5;
 export const PHI_CAP = (80 * Math.PI) / 180;
 
@@ -41,11 +63,15 @@ export const PHI_CAP = (80 * Math.PI) / 180;
 export const T_NEAR_INF = 0.9;
 
 // Widget solve permutation, exported for the harness/spec. NOTE (measured,
-// and the walls.mjs [E] regression): the widget's PRE-swap of beta legs 2/3
-// plus the solver's POST-swap of the returned pair cancel each other, so a
-// displayed polygon leg index j already corresponds to USER beta leg j —
-// no conversion is applied anywhere in this module. PERM is its own
-// inverse, which is why the double swap is the identity.
+// and the walls.mjs [E] regression): under the PERMUTE_23 = true pattern the
+// widget's PRE-swap of beta legs 2/3 plus the solver's POST-swap of the
+// returned pair cancel each other, so a displayed polygon leg index j
+// corresponds to USER beta leg j — no conversion is applied anywhere in
+// this module. PERM is its own inverse, which is why the double swap is the
+// identity. With PERMUTE_23 = false (current setting) the widget passes beta
+// unchanged and permute = false, so no swap happens at all and the same
+// leg-j-is-user-leg-j statement holds; this module's probe follows the flag
+// (see measureSlots).
 export const PERM = [0, 1, 3, 2];
 
 const Y_HAT = [0, 1, 0];
@@ -95,12 +121,12 @@ function unit3(a) {
   return [a[0] / n, a[1] / n, a[2] / n];
 }
 
-// Point on the central sphere, polar angle measured from the south pole:
-// r = 0 is (0, -R, 0), r = 1 is (0, R, 0), theta = 0 the +x meridian.
+// Point on the central sphere of radius R, polar angle measured from the
+// south pole: r = 0 is (0, -R, 0), r = 1 is (0, R, 0), theta = 0 the +x
+// meridian. R is required (callers pass centralRadius(beta)).
 export function spherePoint(r, theta, R) {
-  const rad = R === undefined ? CENTRAL_RADIUS : R;
   const psi = Math.PI * r;
-  return [rad * Math.sin(psi) * Math.cos(theta), -rad * Math.cos(psi), rad * Math.sin(psi) * Math.sin(theta)];
+  return [R * Math.sin(psi) * Math.cos(theta), -R * Math.cos(psi), R * Math.sin(psi) * Math.sin(theta)];
 }
 
 // (PI/2) * (sum of beta off I - sum over I). Chamber shorts guarantee a
@@ -142,6 +168,10 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap) {
   if (!beta || beta.length !== 4) return null;
   for (let i = 0; i < 4; i++) if (!Number.isFinite(beta[i])) return null;
 
+  // Central-sphere size follows beta (centralArea formula above); every
+  // attachment point, exterior center and paraboloid apex sits on THIS R.
+  const R = centralRadius(beta);
+
   const ARC_N = 33;
   for (let k = 0; k < 3; k++) {
     const S = extMap ? extMap[k] : null;
@@ -154,7 +184,7 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap) {
     if (!I || I.length !== 2) continue;
     let rk = pairRadius(beta, I);
     if (!(rk >= 1e-9)) rk = 1e-9;
-    const p = spherePoint(attachmentRs[k], 0);
+    const p = spherePoint(attachmentRs[k], 0, R);
     const n = unit3(p);
     // Side direction: yHat made tangent to the central sphere at p; at
     // the poles that is zero, so fall back to +x (the theta = 0 tangent).
@@ -181,7 +211,7 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap) {
 
   // Central branch: the dot climbs the paraboloid z = rho^2/(2f) tangent
   // at p, opening along +n. phi(t) rises from 0 and saturates at PHI_CAP.
-  const p = spherePoint(r, theta);
+  const p = spherePoint(r, theta, R);
   const frame = tangentFrame(p);
   const n = frame.n;
   const u = frame.u;
@@ -208,9 +238,10 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap) {
 
 // Which chamberShorts pair slot (5, 6 or 7) is the parallel pair at each
 // attachment point. Measured, not assumed: at each attachment the
-// widget-exact solve (legs 2/3 pre-swapped, permute = true) is taken at
+// widget-exact solve (gated on PERMUTE_23 — swapped beta + permute = true,
+// or beta unchanged + permute = false) is taken at
 // t = 0, the 8 polygon edges are grouped into legs (edges (2j, 2j+1),
-// which for this call pattern are the user legs directly — see the PERM
+// which for either pattern are the user legs directly — see the PERM
 // note), and for each of the chamber's pair-shorts the residual is the
 // min over the valid edge-cross combinations of the sine of the angle
 // between the two edges (zero-length edges are skipped — at t = 0 each
@@ -219,7 +250,9 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap) {
 // PARALLEL_RATIO margin over the runner-up; on failure the measurement
 // retries at a small theta (the documented theta = 0 solver stall
 // basin), else the attachment maps to null. Empirically the result is
-// the chamber-INDEPENDENT slot map [6, 5, 7] (south, equator, north),
+// the chamber-INDEPENDENT slot map [6, 5, 7] under the permuted call
+// pattern and [7, 5, 6] under the unpermuted one (the r-leg pairs with
+// leg 0 at r = 0 and leg 1 at r = 1; see PERMUTE_23 in solver.js),
 // with the parallel pair being that chamber's short side — see
 // dev/hyperpolygon/sideview.mjs [P]. Runs 3-6 solves, so call it on
 // beta changes, not per frame.
@@ -253,11 +286,13 @@ export function probeExteriorMap(beta, chamberShorts) {
 }
 
 // Per-slot parallelism residuals at (r, theta, t = 0) with the
-// widget-exact call pattern; null on solve failure or NaN vertices.
+// widget-exact call pattern (gated on PERMUTE_23); null on solve failure
+// or NaN vertices.
 function measureSlots(r, theta, beta, chamberShorts) {
+  const betaSolve = PERMUTE_23 ? [beta[0], beta[1], beta[3], beta[2]] : beta;
   let res;
   try {
-    res = makeHyperpolygon(r, theta, 0, [beta[0], beta[1], beta[3], beta[2]], true);
+    res = makeHyperpolygon(r, theta, 0, betaSolve, PERMUTE_23);
   } catch (e) {
     return null;
   }
@@ -267,8 +302,8 @@ function measureSlots(r, theta, beta, chamberShorts) {
   }
   const edges = [];
   for (let i = 0; i < 8; i++) edges.push(sub3(V[i + 1], V[i]));
-  // displayed leg j owns edges (2j, 2j+1); for the widget-exact call the
-  // double swap cancels, so displayed j IS user leg j (see PERM note)
+  // displayed leg j owns edges (2j, 2j+1); under either PERMUTE_23 pattern
+  // displayed j IS user leg j (see PERM note)
   const out = [];
   for (let s = 5; s <= 7; s++) {
     out.push(pairSine(edges, chamberShorts[s][0], chamberShorts[s][1]));
@@ -340,26 +375,39 @@ export function makeSideView(host, opts) {
   host.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-  camera.position.set(2.3, 1.3, 2.7);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 100);
+  // Framed for the formula-driven central radius (~0.25 at the widget's
+  // default beta, vs the old placeholder 1): pull the camera in so the
+  // portrait fills a comparable fraction of the view.
+  camera.position.set(0.85, 0.5, 1.0);
   camera.lookAt(0, 0, 0);
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.target.set(0.1, 0, 0);
+  controls.target.set(0, 0, 0);
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x777788, 0.9));
   const sun = new THREE.DirectionalLight(0xffffff, 0.6);
   sun.position.set(3, 5, 4);
   scene.add(sun);
 
-  const centralMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  // Central sphere: transparent in BOTH states (slight transparency when
+  // white, so a dot hidden on its backside stays faintly visible; glassy
+  // grey while the dot climbs an exterior sphere). depthWrite stays off so
+  // the opaque dot drawn underneath always shows through the blend.
+  const centralMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false });
   const central = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), centralMat);
-  central.scale.setScalar(CENTRAL_RADIUS);
+  // initial guess until the widget's first update() supplies beta
+  // (0.25 = the default beta's formula radius)
+  central.scale.setScalar(0.25);
   scene.add(central);
 
-  // Shared unit-sphere geometry for the three exterior bubbles.
+  // Shared unit-sphere geometry for the three exterior bubbles. White
+  // state is opacity 0.92 (not 1): the slight transparency lets the user
+  // tell when the black dot is hidden on a sphere's backside.
   const extGeom = new THREE.SphereGeometry(1, 32, 24);
   const WHITE = new THREE.Color(0xffffff);
+  const GREY = new THREE.Color(0xb0b0b0);
+  const EXT_WHITE_OPACITY = 0.92;
   const exts = [];
   for (let k = 0; k < 3; k++) {
     const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.16, depthWrite: false });
@@ -370,7 +418,7 @@ export function makeSideView(host, opts) {
   }
 
   const dotMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.035, 16, 12), dotMat);
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.015, 16, 12), dotMat);
   scene.add(dot);
 
   // Paraboloid: fixed topology, positions recomputed from the flowState
@@ -403,12 +451,16 @@ export function makeSideView(host, opts) {
 
   let lastState = null;
   let lastShowParab = false;
+  let lastT = 0;
   let hovered = false;
+  // Central-sphere grey state: 1 while the dot climbs an exterior sphere
+  // (exterior branch with t > 0), 0 otherwise (white, slight transparency).
+  let centralGrey = 0;
   // Placement of every mapped exterior sphere, recomputed in update():
   // each attachment k with extMap[k] != null shows its sphere at
   // center p + rk * n with radius rk (pairRadius of the mapped slot's
   // pair) — the active branch's sphere is the one whose slot matches
-  // lastState.exterior.slot and it glows.
+  // lastState.slot (the flow state's TOP-level slot) and it glows.
   let extPlacement = [null, null, null];
   let lastExtMap = [null, null, null];
   let disposed = false;
@@ -493,13 +545,18 @@ export function makeSideView(host, opts) {
     }
     lastState = st;
     lastShowParab = !!showParaboloid;
+    lastT = t;
     lastExtMap = extMap || [null, null, null];
     dot.position.set(st.dot[0], st.dot[1], st.dot[2]);
     setArc(st);
     if (lastShowParab && st.paraboloid) setParaboloid(st.paraboloid);
 
+    // The central sphere's size follows beta (centralArea formula).
+    central.scale.setScalar(centralRadius(beta));
+
     // Recompute every mapped exterior sphere's placement (the two
     // inactive attachments never appear in flowState's exterior branch).
+    const R = centralRadius(beta);
     for (let k = 0; k < 3; k++) {
       const S = lastExtMap[k];
       if (S === null || S === undefined || !chamberShorts[S]) {
@@ -508,7 +565,7 @@ export function makeSideView(host, opts) {
       }
       let rk = pairRadius(beta, chamberShorts[S]);
       if (!(rk >= 1e-9)) rk = 1e-9;
-      const p = spherePoint(attachmentRs[k], 0);
+      const p = spherePoint(attachmentRs[k], 0, R);
       const n = unit3(p);
       extPlacement[k] = { center: add3(p, scale3(n, rk)), radius: rk };
     }
@@ -537,9 +594,14 @@ export function makeSideView(host, opts) {
     if (dt > 0.05) dt = 0.05;
 
     // Exterior bubbles from the placement recomputed in update(); the
-    // attachment whose slot is the current flow branch glows to full
-    // opacity with an ~80 ms exponential lag.
-    const activeSlot = lastState && lastState.exterior ? lastState.exterior.slot : null;
+    // attachment whose slot is the current flow branch glows to the white
+    // state (opacity 0.92 — slight transparency so a backside dot stays
+    // faintly visible) with an ~80 ms exponential lag. The branch slot
+    // lives at the TOP level of the flow state (st.slot); the exterior
+    // frame object carries no slot — reading lastState.exterior.slot here
+    // was always undefined, which is why the bubbles never highlighted
+    // (fixed 2026-09-13, user report).
+    const activeSlot = lastState ? lastState.slot : null;
     for (let k = 0; k < 3; k++) {
       const e = exts[k];
       const place = extPlacement[k];
@@ -549,13 +611,22 @@ export function makeSideView(host, opts) {
         e.mesh.visible = true;
         e.mesh.position.set(place.center[0], place.center[1], place.center[2]);
         e.mesh.scale.setScalar(place.radius);
-        e.mat.opacity = 0.16 + (1.0 - 0.16) * e.glow;
+        e.mat.opacity = 0.16 + (EXT_WHITE_OPACITY - 0.16) * e.glow;
         e.mat.color.setHex(pal().ext).lerp(WHITE, e.glow);
       } else {
         e.mesh.visible = false;
         e.glow = 0;
       }
     }
+
+    // Central sphere: grey/transparent while the dot climbs an exterior
+    // sphere (exterior branch, t > 0); white with slight transparency
+    // otherwise (central branch of any t, or an exterior sphere merely
+    // TOUCHED at t = 0). Same ~80 ms lag as the bubbles.
+    const greyTarget = lastState && lastState.exterior && lastT > 1e-9 ? 1 : 0;
+    centralGrey += (greyTarget - centralGrey) * (1 - Math.exp(-dt / 0.08));
+    centralMat.color.setHex(pal().sphere).lerp(GREY, centralGrey);
+    centralMat.opacity = 0.92 + (0.3 - 0.92) * centralGrey;
 
     const showPara = lastShowParab && lastState && lastState.paraboloid !== null;
     paraMesh.visible = !!showPara;

@@ -602,6 +602,16 @@ function swapLegs23(x, y) {
   return [xs, ys];
 }
 
+// Master switch for the beta legs 2 <-> 3 widget permutation (the widget's
+// pre-swap of beta plus this module's permute=true output swap, which cancel
+// in the display). Set FALSE to disable the permutation: callers then pass
+// beta unchanged and permute = false, so the returned (x, y) is the solved
+// representative for the given beta directly. Either setting keeps the
+// displayed polygon leg j = user beta leg j and mu_U1 = the user beta.
+// Disabled per user request 2026-09-13; flip to true to restore the
+// historical widget-exact call pattern.
+export const PERMUTE_23 = true;
+
 // Main entry: (r, theta, t, beta, permute) -> {x, y, vertices, sl2, accuracy}
 // permute = true (default) swaps quiver legs 2 and 3 in the returned (x, y)
 // and builds the display polygons from the swapped pair; this re-orders the
@@ -609,6 +619,8 @@ function swapLegs23(x, y) {
 // since they depend only on the leg sum). accuracy always describes the
 // solved (unpermuted) representative, which solves the moment map equations
 // for the given beta; the permuted pair does too only when beta2 = beta3.
+// Callers that pair permute = true with a pre-swapped beta should gate both
+// on PERMUTE_23 (see widget.js / sideview.js) so the swaps cancel together.
 export function makeHyperpolygon(r, theta, t, beta, permute = true) {
   const reff = Math.min(r, 1 - 1e-5);
   const ySolveX = buildX(reff, theta, beta[0]);

@@ -8,9 +8,12 @@
 //        probeExteriorMap returns a permutation of slots {5,6,7} whose
 //        mapped pair is parallel at its attachment (residual < 1e-3),
 //        plus the mapping table and the concluded chamber-independent
-//        rule [6, 5, 7] (south, equator, north)
+//        rule — [6, 5, 7] under the permuted call pattern, [7, 5, 6]
+//        under the unpermuted one (follows PERMUTE_23, south/equator/north)
 //   [S]  sizes: pairRadius = sqrt(D/8) on hand-computed cases, monotone
-//        in D, and pairArea clamps nonpositive D to 0
+//        in D, and pairArea clamps nonpositive D to 0; centralArea/
+//        centralRadius from the user's formula (pi/2)*|z_max - z_min|
+//        incl. the dominant-chamber magnitude case
 //   [F]  central flow: t = 0 lands exactly on spherePoint; t > 0 sits on
 //        the paraboloid z = rho^2/(2f) of the returned frame; |dot|
 //        escapes the sphere monotonically in t; arc starts at the sphere
@@ -24,8 +27,8 @@
 //        endpoint grid of (r, theta, t) returns finite output
 //   [I]  purity: repeated flowState calls are bit-identical
 import { shortSubsets, chamberInterval } from "./chambers.js";
+import { PERMUTE_23 } from "./solver.js";
 import {
-  CENTRAL_RADIUS,
   attachmentRs,
   PARAB_FOCAL,
   PHI_CAP,
@@ -34,6 +37,8 @@ import {
   spherePoint,
   pairArea,
   pairRadius,
+  centralArea,
+  centralRadius,
   flowState,
   probeExteriorMap,
 } from "./sideview.js";
@@ -141,16 +146,20 @@ for (const beta of P_BETAS) {
   }
 // The concluded rule: the SLOT at each attachment is chamber-independent
 // (the parallel pair itself is that chamber's short side, so the pair
-// label varies with the chamber but the split does not). This hard assert
-// encodes the measured rule; if a future chamber violates it the battery
-// should surface it, not silently absorb it.
+// label varies with the chamber but the split does not). The map was
+// measured under each call pattern: permuted [6,5,7], unpermuted [7,5,6]
+// (the r-leg pairs with leg 0 at r = 0 and leg 1 at r = 1). This hard
+// assert encodes the measured rule for the CURRENT PERMUTE_23 setting; if
+// a future chamber violates it the battery should surface it, not silently
+// absorb it.
+const EXPECTED_MAP = PERMUTE_23 ? [6, 5, 7] : [7, 5, 6];
 for (const beta of P_BETAS) {
   const shorts = shortSubsets(beta);
   if (!inChamber(beta, shorts)) continue;
   const probe = probeExteriorMap(beta, shorts);
   ok(
-    probe.map[0] === 6 && probe.map[1] === 5 && probe.map[2] === 7,
-    `[P] ${fmtBeta(beta)} violates the concluded rule map=[6,5,7]: ${JSON.stringify(probe.map)}`
+    probe.map[0] === EXPECTED_MAP[0] && probe.map[1] === EXPECTED_MAP[1] && probe.map[2] === EXPECTED_MAP[2],
+    `[P] ${fmtBeta(beta)} violates the concluded rule map=[${EXPECTED_MAP}]: ${JSON.stringify(probe.map)}`
   );
 }
 console.log(
@@ -160,7 +169,7 @@ console.log(
 
 // ---------------------------------------------------------------------------
 // [S] sizes
-console.log("[S] pairArea/pairRadius sizes");
+console.log("[S] pairArea/pairRadius sizes + centralArea/centralRadius (user formula)");
 {
   const beta = [0.5, 0.5, 0.5, 0.25];
   const area = pairArea(beta, [2, 3]);
@@ -186,6 +195,34 @@ console.log("[S] pairArea/pairRadius sizes");
   const near = [0.5, 0.25, 0.25, 0.5 - 1e-12];
   const dn = pairArea(near, [2, 3]) / (Math.PI / 2);
   ok(dn > 0 && dn < 1e-11 && Number.isFinite(pairRadius(near, [2, 3])), `[S] near-wall D = ${dn}`);
+
+  // central sphere: z_max = min(|b0+b3|, |b1+b2|), z_min = max(|b3-b0|,
+  // |b2-b1|), tau = (PI/2)*|z_max - z_min| (the ABSOLUTE value — user
+  // correction 2026-09-13), radius = sqrt(tau/(4 PI)).
+  // Default beta: z_max = 0.75, z_min = 0.25, tau = PI/4, radius 0.25.
+  const ca = centralArea(beta);
+  ok(Math.abs(ca - Math.PI / 4) <= 1e-15, `[S] centralArea(default) = ${ca} != PI/4`);
+  const cr = centralRadius(beta);
+  ok(Math.abs(cr - 0.25) <= 1e-15, `[S] centralRadius(default) = ${cr} != 0.25`);
+  // hand case: beta = (0.2, 0.3, 0.4, 0.5): z_max = min(0.7, 0.7) = 0.7,
+  // z_min = max(0.3, 0.1) = 0.3, radius = sqrt(0.4/8) = sqrt(0.05)
+  const cb = [0.2, 0.3, 0.4, 0.5];
+  ok(Math.abs(centralArea(cb) - (Math.PI / 2) * 0.4) <= 1e-15, `[S] centralArea([0.2,0.3,0.4,0.5]) = ${centralArea(cb)}`);
+  ok(Math.abs(centralRadius(cb) - Math.sqrt(0.05)) <= 1e-15, `[S] centralRadius([0.2,0.3,0.4,0.5]) = ${centralRadius(cb)}`);
+  // a dominant leg makes z_max - z_min NEGATIVE (z_max = 0.3 < z_min = 0.9
+  // here); the area is the magnitude, so the sphere persists
+  const dom = [0.95, 0.2, 0.1, 0.05];
+  ok(Math.abs(centralArea(dom) - (Math.PI / 2) * 0.6) <= 1e-15, `[S] centralArea(dominant) = ${centralArea(dom)} != (PI/2)*0.6`);
+  ok(Math.abs(centralRadius(dom) - Math.sqrt(0.6 / 8)) <= 1e-15, `[S] centralRadius(dominant) = ${centralRadius(dom)} != sqrt(0.075)`);
+  // monotone in the spread: growing the {0,3} pair against fixed b1, b2
+  // widens |z_max - z_min|
+  let prevC = -1;
+  for (const b0 of [0.2, 0.3, 0.4]) {
+    const b = [b0, 0.3, 0.4, 0.5];
+    const rr = centralRadius(b);
+    ok(rr > prevC, `[S] centralRadius not increasing: ${rr} after ${prevC}`);
+    prevC = rr;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +231,7 @@ console.log("[F] central flow (grid over r, theta, t; solver-free)");
 {
   const beta = [0.5, 0.5, 0.5, 0.25];
   const shorts = shortSubsets(beta);
+  const R = centralRadius(beta); // 0.25 for this beta (asserted in [S])
   // no exterior spheres: the grid intentionally includes the three
   // attachment points, and only a null extMap leaves them to the
   // central branch
@@ -212,7 +250,7 @@ console.log("[F] central flow (grid over r, theta, t; solver-free)");
         if (!ok(st !== null && st.kind === "central", `[F] flowState(${r},${th},${t}) not central: ${st && st.kind}`)) continue;
         const P = st.paraboloid;
         if (!ok(P && finite3(P.apex) && finite3(P.u) && finite3(P.v) && finite3(P.n), `[F] (${r},${th},${t}) paraboloid frame broken`)) continue;
-        const p0 = spherePoint(r, th);
+        const p0 = spherePoint(r, th, R);
         if (t === 0) {
           countT0++;
           const d = maxDiff(st.dot, p0);
@@ -238,7 +276,7 @@ console.log("[F] central flow (grid over r, theta, t; solver-free)");
         const resid = Math.abs(zl - (rho * rho) / (2 * P.f));
         if (t > 0) ok(resid <= 1e-12, `[F] (${r},${th},${t}) paraboloid residual ${resid.toExponential(2)}`);
         if (resid > worstParabResid) worstParabResid = resid;
-        ok(Math.hypot(...st.dot) >= CENTRAL_RADIUS - 1e-12, `[F] (${r},${th},${t}) dot inside the sphere`);
+        ok(Math.hypot(...st.dot) >= R - 1e-12, `[F] (${r},${th},${t}) dot inside the sphere`);
         ok(finite3(st.dot) && st.arc.length === 33 && st.arc.every(finite3), `[F] (${r},${th},${t}) arc not 33 finite points`);
         ok(maxDiff(st.arc[0], p0) <= 1e-12, `[F] (${r},${th},${t}) arc does not start at the sphere point`);
         ok(maxDiff(st.arc[32], st.dot) <= 1e-12, `[F] (${r},${th},${t}) arc does not end at the dot`);
@@ -288,7 +326,8 @@ console.log("[E] exterior flow (attachment climbs for several chambers)");
   for (const beta of E_BETAS) {
     const shorts = shortSubsets(beta);
     const probe = probeExteriorMap(beta, shorts);
-    if (!ok(probe.map.join(",") === "6,5,7", `[E] unexpected map ${JSON.stringify(probe.map)} for ${fmtBeta(beta)}`)) continue;
+    const expectedMap = EXPECTED_MAP.join(",");
+    if (!ok(probe.map.join(",") === expectedMap, `[E] unexpected map ${JSON.stringify(probe.map)} for ${fmtBeta(beta)} (expected [${expectedMap}])`)) continue;
     for (let k = 0; k < 3; k++) {
       const S = probe.map[k];
       const prev = { ang: Infinity, near: false };

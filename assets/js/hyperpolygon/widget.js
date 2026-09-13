@@ -1,7 +1,7 @@
 // Hyperpolygon widget: live three.js view of the su(2) polygon computed by ./solver.js.
 // Loaded as an ES module after the vendored three.min.js and OrbitControls.js (global THREE).
 
-import { makeHyperpolygon } from "./solver.js";
+import { makeHyperpolygon, PERMUTE_23 } from "./solver.js";
 import { makeOrientor } from "./orientation.js";
 import { shortSubsets, chamberInterval, applyBetaDrag, breakingSubsets } from "./chambers.js";
 import { makeSideView, probeExteriorMap } from "./sideview.js";
@@ -124,6 +124,23 @@ function ensureSliderStyles() {
     "#hyperpolygon-widget .hp-btn:disabled {",
     "  opacity: 0.45;",
     "  cursor: default;",
+    "}",
+    // \vec{β} for the scale buttons: the combining-arrow codepoint
+    // (U+03B2 + U+20D7) renders badly in most UI fonts, so the arrow is
+    // drawn as a separate ::after glyph positioned above the β.
+    "#hyperpolygon-widget .hp-vec {",
+    "  position: relative;",
+    "  display: inline-block;",
+    "}",
+    "#hyperpolygon-widget .hp-vec::after {",
+    "  content: '\\2192';",
+    "  position: absolute;",
+    "  left: 50%;",
+    "  top: -0.95em;",
+    "  transform: translateX(-50%);",
+    "  font-size: 0.55em;",
+    "  line-height: 1;",
+    "  pointer-events: none;",
     "}",
     "#hyperpolygon-widget .hp-cross-btn {",
     "  padding: 0 6px;",
@@ -303,15 +320,18 @@ function activate(container) {
     const r = parseFloat(rInput.value);
     const theta = parseFloat(thetaInput.value) * Math.PI;
     const t = Math.min(parseFloat(tInput.value), T_SOLVE_MAX);
-    // Solve with legs 2 and 3 pre-swapped: makeHyperpolygon(permute=true)
-    // returns the leg-2<->3-swapped pair, which then satisfies the moment
-    // map equations for the user's beta even when beta2 != beta3 (see
-    // solver.js). When beta2 = beta3 this call is identical to passing
-    // beta directly, preserving the historical default view.
-    const betaSolve = [beta[0], beta[1], beta[3], beta[2]];
+    // Beta legs 2/3 permutation, gated on PERMUTE_23 (solver.js). When true:
+    // solve with legs 2 and 3 pre-swapped and permute = true — makeHyperpolygon
+    // returns the leg-2<->3-swapped pair, which then satisfies the moment map
+    // equations for the user's beta even when beta2 != beta3 (the double swap
+    // cancels in the display). When false (current setting): pass beta
+    // unchanged and permute = false, so the returned pair IS the solved
+    // representative for the user's beta. Either way the displayed polygon
+    // leg j is user leg j; the two calls are identical when beta2 = beta3.
+    const betaSolve = PERMUTE_23 ? [beta[0], beta[1], beta[3], beta[2]] : beta;
     let res = null;
     try {
-      res = makeHyperpolygon(r, theta, t, betaSolve, true);
+      res = makeHyperpolygon(r, theta, t, betaSolve, PERMUTE_23);
     } catch (err) {
       res = null;
     }
@@ -560,27 +580,40 @@ function activate(container) {
   // scale buttons: chambers are scale-invariant (the wall inequalities are
   // homogeneous in beta), so uniform scaling never crosses a wall — no
   // clamping is needed, the whole state is just re-synced from the scaled
-  // tuple. 0.25 and 4 are powers of two, so down-scaling and the unclamped
-  // part of up-scaling are fp-exact; up-scaling clamps the factor to
-  // 1/max(beta) so the tuple scales exactly until the largest weight
-  // equals 1.0 (the slider limit). The Scale Down floor 0.02 exists
-  // because chamberInterval's hard WALL_MARGIN = 0.003 0-wall floor
-  // collapses the displayed allowed spans once the tuple scale approaches
-  // ~2*WALL_MARGIN (the solver itself is scale-robust far below that).
+  // tuple. Factors are SUBTLE by design (user request 2026-09-13 — the old
+  // x0.25 / up-to-x4 steps maxed weights out in one click): down x0.8, up
+  // x1.25, clamped to 1/max so the largest weight lands exactly on the
+  // slider limit 1.0 (pinned exactly — x*(1/x) can land 1 ulp off). The
+  // Scale Down floor 0.02 exists because chamberInterval's hard
+  // WALL_MARGIN = 0.003 0-wall floor collapses the displayed allowed spans
+  // once the tuple scale approaches ~2*WALL_MARGIN (the solver itself is
+  // scale-robust far below that).
+  const SCALE_UP_FACTOR = 1.25;
+  const SCALE_DOWN_FACTOR = 0.8;
   const SCALE_DOWN_MIN = 0.02;
   const scaleRow = document.createElement("div");
   scaleRow.style.flex = "1 1 100%";
   scaleRow.style.display = "flex";
   scaleRow.style.gap = "8px";
-  scaleRow.style.marginTop = "6px";
+  scaleRow.style.marginTop = "8px";
+  // \vec{β} via the .hp-vec CSS overarrow (the combining codepoint renders
+  // badly); extra top padding clears the arrow above the button label
+  function vecBeta() {
+    const s = document.createElement("span");
+    s.className = "hp-vec";
+    s.textContent = "\u03b2";
+    return s;
+  }
   const scaleDownBtn = document.createElement("button");
   scaleDownBtn.type = "button";
   scaleDownBtn.className = "hp-btn";
-  scaleDownBtn.textContent = "Scale \u03b2\u20d7 Down";
+  scaleDownBtn.style.paddingTop = "5px";
+  scaleDownBtn.append("Scale ", vecBeta(), " Down");
   const scaleUpBtn = document.createElement("button");
   scaleUpBtn.type = "button";
   scaleUpBtn.className = "hp-btn";
-  scaleUpBtn.textContent = "Scale \u03b2\u20d7 Up";
+  scaleUpBtn.style.paddingTop = "5px";
+  scaleUpBtn.append("Scale ", vecBeta(), " Up");
   scaleRow.appendChild(scaleDownBtn);
   scaleRow.appendChild(scaleUpBtn);
   controlsRow.appendChild(scaleRow);
@@ -589,12 +622,12 @@ function activate(container) {
     let mx = 0;
     for (let i = 0; i < 4; i++) if (beta[i] > mx) mx = beta[i];
     scaleUpBtn.disabled = mx >= 1 - 1e-12;
-    scaleDownBtn.disabled = mx * 0.25 < SCALE_DOWN_MIN;
+    scaleDownBtn.disabled = mx * SCALE_DOWN_FACTOR < SCALE_DOWN_MIN;
   }
 
   scaleDownBtn.addEventListener("click", () => {
     if (scaleDownBtn.disabled) return;
-    for (let i = 0; i < 4; i++) beta[i] *= 0.25;
+    for (let i = 0; i < 4; i++) beta[i] *= SCALE_DOWN_FACTOR;
     syncBetaSliders();
     scheduleSolve();
   });
@@ -607,10 +640,11 @@ function activate(container) {
         mx = beta[i];
         arg = i;
       }
-    const f = Math.min(4, 1 / mx);
+    const f = Math.min(SCALE_UP_FACTOR, 1 / mx);
     for (let i = 0; i < 4; i++) beta[i] *= f;
-    // x * (1/x) can land 1 ulp off 1.0, so pin the largest weight exactly
-    beta[arg] = 1;
+    // when the factor was clamped to 1/max, x * (1/x) can land 1 ulp off
+    // 1.0, so pin the largest weight exactly
+    if (f === 1 / mx) beta[arg] = 1;
     syncBetaSliders();
     scheduleSolve();
   });
