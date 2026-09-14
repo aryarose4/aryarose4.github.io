@@ -25,9 +25,14 @@
 //   [N]  NaN-safety: non-finite inputs return null; near-wall betas
 //        (D ~ 1e-12 and D = 0 on the wall) stay finite; the full slider
 //        endpoint grid of (r, theta, t) returns finite output
+//   [G]  gamma (U(1) level circles): exterior |dot-center| = rk and the
+//        polar height off.n invariant under gamma, t = 0/1 endpoints
+//        fixed, gamma = 0 bit-exact vs the omitted argument, 2pi-
+//        periodic, paraboloid constraint z = rho^2/(2f) and rho
+//        preserved, apex fixed, rotated frames orthonormal
 //   [I]  purity: repeated flowState calls are bit-identical
 import { shortSubsets, chamberInterval } from "./chambers.js";
-import { PERMUTE_23 } from "./solver.js";
+import { PERMUTE_23, starSlots, cycleSlots } from "./solver.js";
 import {
   attachmentRs,
   PARAB_FOCAL,
@@ -113,6 +118,12 @@ const P_BETAS = [
   [0.55, 0.15, 0.45, 0.35],
   [0.2, 0.45, 0.3, 0.54],
   [0.6, 0.5, 0.4, 0.31],
+  // the four chambers the original eight missed (star.mjs/cycle.mjs tuples),
+  // so [P] measures all 8 interior chambers
+  [0.2, 0.28, 0.27, 0.25],
+  [0.28, 0.27, 0.2, 0.25],
+  [0.2, 0.2, 0.4, 0.2],
+  [0.2, 0.2, 0.2, 0.4],
 ];
 const chambersSeen = {};
 let worstRatio = Infinity;
@@ -144,19 +155,32 @@ for (const beta of P_BETAS) {
       console.log(`    ${ATT_NAMES[k].padEnd(16)} legs ${legStr.padEnd(6)}     S${S}     ${probe.detail[k].residuals.map((v) => v.toExponential(2)).join(" / ")}`);
     }
   }
-// The concluded rule: the SLOT at each attachment is chamber-independent
-// (the parallel pair itself is that chamber's short side, so the pair
-// label varies with the chamber but the split does not). The map was
-// measured under each call pattern: permuted [6,5,7], unpermuted [7,5,6]
-// (the r-leg pairs with leg 0 at r = 0 and leg 1 at r = 1). This hard
-// assert encodes the measured rule for the CURRENT PERMUTE_23 setting; if
-// a future chamber violates it the battery should surface it, not silently
-// absorb it.
-const EXPECTED_MAP = PERMUTE_23 ? [6, 5, 7] : [7, 5, 6];
+// The concluded rule (coherent attachment assignment, 2026-09-14): the
+// three pair-SPLITS map to the three attachment points identically in EVERY
+// chamber — south {0,3}|{1,2} (slot 7), equator {0,1}|{2,3} (slot 5), north
+// {0,2}|{1,3} (slot 6) — so the map is the constant [7,5,6] and crossing a
+// pair wall transfers only the crossed point's pair to its complement. The
+// solver realizes this per chamber by the coherent reindexing (starSig /
+// cycleSig; solver.js starSlots / cycleSlots derive it analytically, and
+// cycleSlots also covers exterior chambers, whose pair short sides are the
+// cycle chamber's). Under the permuted PERMUTE_23 pattern the composed rule
+// is not derived (the flag is false and slated for obsolescence by the
+// crease-consistency traversal task). If a chamber violates the rule the
+// battery should surface it, not silently absorb it.
+function expectedMapFor(beta) {
+  if (!PERMUTE_23) {
+    const s = starSlots(beta);
+    if (s !== null) return s;
+    const c = cycleSlots(beta);
+    if (c !== null) return c;
+  }
+  return PERMUTE_23 ? [6, 5, 7] : [7, 5, 6];
+}
 for (const beta of P_BETAS) {
   const shorts = shortSubsets(beta);
   if (!inChamber(beta, shorts)) continue;
   const probe = probeExteriorMap(beta, shorts);
+  const EXPECTED_MAP = expectedMapFor(beta);
   ok(
     probe.map[0] === EXPECTED_MAP[0] && probe.map[1] === EXPECTED_MAP[1] && probe.map[2] === EXPECTED_MAP[2],
     `[P] ${fmtBeta(beta)} violates the concluded rule map=[${EXPECTED_MAP}]: ${JSON.stringify(probe.map)}`
@@ -326,7 +350,7 @@ console.log("[E] exterior flow (attachment climbs for several chambers)");
   for (const beta of E_BETAS) {
     const shorts = shortSubsets(beta);
     const probe = probeExteriorMap(beta, shorts);
-    const expectedMap = EXPECTED_MAP.join(",");
+    const expectedMap = expectedMapFor(beta).join(",");
     if (!ok(probe.map.join(",") === expectedMap, `[E] unexpected map ${JSON.stringify(probe.map)} for ${fmtBeta(beta)} (expected [${expectedMap}])`)) continue;
     for (let k = 0; k < 3; k++) {
       const S = probe.map[k];
@@ -374,6 +398,105 @@ console.log("[E] exterior flow (attachment climbs for several chambers)");
     }
   }
   console.log(`  worst |dot-center| error ${worstSphere.toExponential(2)}; worst endpoint diff ${worstEnd.toExponential(2)}; worst radius diff ${worstRadius.toExponential(2)}`);
+}
+
+// ---------------------------------------------------------------------------
+// [G] gamma: the U(1) phase rotates the dot along level circles
+console.log("[G] gamma level circles (exterior spheres + paraboloids)");
+{
+  const G_BETAS = [
+    [0.5, 0.5, 0.5, 0.25],
+    [0.45, 0.2, 0.5, 0.3],
+  ];
+  const GAMMAS = [1e-3, 0.7, -2.1, Math.PI];
+  const TS = [0, 0.25, 0.5, 0.9, 1];
+  let worstSphere = 0;
+  let worstHeight = 0;
+  let worstRho = 0;
+  let worstPara = 0;
+  let worstFrame = 0;
+  let moved = 0;
+  for (const beta of G_BETAS) {
+    const shorts = shortSubsets(beta);
+    const probe = probeExteriorMap(beta, shorts);
+    // exterior branch: level circles on the sphere
+    for (let k = 0; k < 3; k++) {
+      const S = probe.map[k];
+      if (S === null) continue;
+      for (const t of TS) {
+        const st0 = flowState(attachmentRs[k], 0, t, beta, shorts, probe.map, 0);
+        const base = flowState(attachmentRs[k], 0, t, beta, shorts, probe.map);
+        ok(JSON.stringify(st0) === JSON.stringify(base), `[G] att ${k} t=${t}: gamma=0 not bit-exact vs omitted arg`);
+        const ex0 = st0.exterior;
+        const h0 = (st0.dot[0] - ex0.center[0]) * ex0.normal[0] + (st0.dot[1] - ex0.center[1]) * ex0.normal[1] + (st0.dot[2] - ex0.center[2]) * ex0.normal[2];
+        for (const g of GAMMAS) {
+          const st = flowState(attachmentRs[k], 0, t, beta, shorts, probe.map, g);
+          if (!ok(st !== null && st.kind === "exterior", `[G] att ${k} t=${t} g=${g}: exterior branch lost`)) continue;
+          const ex = st.exterior;
+          const off = [st.dot[0] - ex.center[0], st.dot[1] - ex.center[1], st.dot[2] - ex.center[2]];
+          const dist = Math.abs(Math.hypot(...off) - ex.radius);
+          if (dist > worstSphere) worstSphere = dist;
+          ok(dist <= 1e-12, `[G] att ${k} t=${t} g=${g}: |dot-center| off radius by ${dist.toExponential(2)}`);
+          const h = off[0] * ex.normal[0] + off[1] * ex.normal[1] + off[2] * ex.normal[2];
+          const dh = Math.abs(h - h0);
+          if (dh > worstHeight) worstHeight = dh;
+          ok(dh <= 1e-12, `[G] att ${k} t=${t} g=${g}: polar height changed by ${dh.toExponential(2)}`);
+          if (t === 0) {
+            const d0 = maxDiff(st.dot, ex.attachment);
+            ok(d0 <= 1e-12, `[G] att ${k} g=${g}: t=0 dot off attachment by ${d0.toExponential(2)}`);
+          }
+          if (t === 1) {
+            const anti = [ex.center[0] + ex.radius * ex.normal[0], ex.center[1] + ex.radius * ex.normal[1], ex.center[2] + ex.radius * ex.normal[2]];
+            const d1 = maxDiff(st.dot, anti);
+            ok(d1 <= 1e-12, `[G] att ${k} g=${g}: t=1 dot off antipode by ${d1.toExponential(2)}`);
+          }
+          if (t === 0.5) {
+            const dm = maxDiff(st.dot, base.dot);
+            if (dm > 1e-9) moved++;
+            // 2pi periodicity (fp: cos/sin of shifted args agree to ~1e-16)
+            const st2 = flowState(attachmentRs[k], 0, t, beta, shorts, probe.map, g + 2 * Math.PI);
+            ok(maxDiff(st.dot, st2.dot) <= 1e-12, `[G] att ${k} g=${g}: not 2pi-periodic`);
+          }
+        }
+      }
+    }
+    // central branch: level circles on the paraboloid
+    for (const [r, th] of [[0.25, 0.3], [0.75, -0.8]]) {
+      for (const t of TS) {
+        const st0 = flowState(r, th, t, beta, shorts, probe.map, 0);
+        if (!ok(st0 !== null && st0.kind === "central", "[G] central baseline lost")) continue;
+        const P0 = st0.paraboloid;
+        const off0 = [st0.dot[0] - P0.apex[0], st0.dot[1] - P0.apex[1], st0.dot[2] - P0.apex[2]];
+        const z0 = off0[0] * P0.n[0] + off0[1] * P0.n[1] + off0[2] * P0.n[2];
+        const rho0 = Math.hypot(off0[0] - z0 * P0.n[0], off0[1] - z0 * P0.n[1], off0[2] - z0 * P0.n[2]);
+        for (const g of GAMMAS) {
+          const st = flowState(r, th, t, beta, shorts, probe.map, g);
+          if (!ok(st !== null && st.kind === "central", `[G] (${r},${th}) t=${t} g=${g}: central branch lost`)) continue;
+          const P = st.paraboloid;
+          ok(maxDiff(P.apex, P0.apex) === 0, `[G] (${r},${th}) t=${t} g=${g}: apex moved`);
+          const off = [st.dot[0] - P.apex[0], st.dot[1] - P.apex[1], st.dot[2] - P.apex[2]];
+          const z = off[0] * P.n[0] + off[1] * P.n[1] + off[2] * P.n[2];
+          const rho = Math.hypot(off[0] - z * P.n[0], off[1] - z * P.n[1], off[2] - z * P.n[2]);
+          const dr = Math.abs(rho - rho0);
+          if (dr > worstRho) worstRho = dr;
+          ok(dr <= 1e-12, `[G] (${r},${th}) t=${t} g=${g}: level-circle radius changed by ${dr.toExponential(2)}`);
+          const dz = Math.abs(z - rho * rho / (2 * P.f));
+          if (dz > worstPara) worstPara = dz;
+          ok(dz <= 1e-12, `[G] (${r},${th}) t=${t} g=${g}: paraboloid constraint off by ${dz.toExponential(2)}`);
+          // rotated frame orthonormality
+          const un = Math.hypot(...P.u) - 1;
+          const ud = P.u[0] * P.n[0] + P.u[1] * P.n[1] + P.u[2] * P.n[2];
+          worstFrame = Math.max(worstFrame, Math.abs(un), Math.abs(ud));
+          ok(Math.abs(un) <= 1e-14 && Math.abs(ud) <= 1e-14, `[G] (${r},${th}) g=${g}: rotated u not orthonormal to n`);
+        }
+      }
+    }
+  }
+  ok(moved >= 3, `[G] gamma never moved the exterior dot (moved=${moved})`);
+  console.log(
+    `  worst sphere err ${worstSphere.toExponential(2)}, height drift ${worstHeight.toExponential(2)}, ` +
+    `rho drift ${worstRho.toExponential(2)}, paraboloid err ${worstPara.toExponential(2)}, frame ${worstFrame.toExponential(2)}`
+  );
 }
 
 // ---------------------------------------------------------------------------

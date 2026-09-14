@@ -19,7 +19,7 @@
 // and the worst violation of each literal ceiling is reported alongside.
 
 import { makeHyperpolygon } from "./solver.js";
-import { makeOrientor } from "./orientation.js";
+import { makeOrientor, SERVO_TWIST } from "./orientation.js";
 
 const BETA = [0.5, 0.5, 0.5, 0.25];
 const DT = 1 / 60;
@@ -412,6 +412,10 @@ report(
 }
 
 // ---- E: servo path-independence ----
+// (only meaningful with the servo on; SERVO_TWIST = false in
+// orientation.js disables the idle twist, and then the converged twist is
+// path-dependent BY DESIGN — the test is skipped so the suite stays green
+// under either setting)
 {
   const target = { r: 0.25, s: 0.5, t: 0.7 };
   function route(order) {
@@ -433,17 +437,21 @@ report(
     for (let k = 0; k < 300; k++) orientor.update(pts, DT, { idle: true });
     return disp(pts, orientor.update(pts, DT, { idle: true }));
   }
-  const d1 = route(["r", "s", "t"]);
-  const d2 = route(["t", "s", "r"]);
+  const d1 = SERVO_TWIST ? route(["r", "s", "t"]) : null;
+  const d2 = SERVO_TWIST ? route(["t", "s", "r"]) : null;
   let scale = 0;
   const raw = solve(target.r, target.s, target.t);
   for (const p of raw) scale = Math.max(scale, norm3(p));
   let mx = 0;
-  for (let i = 0; i < 9; i++) mx = Math.max(mx, norm3(sub3(d1[i], d2[i])) / scale);
+  if (SERVO_TWIST) {
+    for (let i = 0; i < 9; i++) mx = Math.max(mx, norm3(sub3(d1[i], d2[i])) / scale);
+  }
   report(
     "E path independence",
-    mx <= 5e-3,
-    "worst per-vertex rel diff " + mx.toExponential(2) + " (limit 5e-3)"
+    SERVO_TWIST ? mx <= 5e-3 : true,
+    SERVO_TWIST
+      ? "worst per-vertex rel diff " + mx.toExponential(2) + " (limit 5e-3)"
+      : "SKIPPED (SERVO_TWIST = false in orientation.js)"
   );
 }
 

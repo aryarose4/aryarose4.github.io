@@ -117,7 +117,21 @@ console.log("[B] stall band inside/outside the gate disk (t=0.5)");
   console.log(`    done (failures=${failures})`);
 }
 
-// [C] display continuity: the locus rep is the direct offset solve
+// [C] display continuity. Two regimes at (0.5, 0):
+// - the locus solve STALLS (su2 > 1e-9, the retry trigger): the retry
+//   returns the offset rep, so the locus invariants are BIT-EXACT the
+//   direct r = 0.5 - 1e-4 solve and the neighbor branch agrees to
+//   1e-4*scale (star-era behavior).
+// - the locus solve is CLEAN: the true branch exists AT the locus and no
+//   retry fires; the rep continues the offset branches smoothly, so assert
+//   second-order continuity — the central second difference D2(d) =
+//   v(-d) + v(d) - 2v(0) must scale like d^2 (D2(2d) ~= 4 D2(d) to 30% +
+//   1e-12 per invariant entry). Per-entry first differences are NOT usable:
+//   at the locus several invariants are exactly 0 or 1/2 (discrete-symmetry
+//   enforced), giving even-in-d V-shaped terms (measured r-slope for the
+//   cycle beta below is ~0.93 at t=0 up to ~7 at t=0.9, plus quadratic
+//   terms); a JUMP instead leaves D2(d) ~ constant in d, which fails the
+//   4x scaling for any jump > ~1e-12.
 console.log("[C] continuity (bit-exact offset identity + neighbor branch)");
 {
   function invariants(res) {
@@ -128,24 +142,50 @@ console.log("[C] continuity (bit-exact offset identity + neighbor branch)");
   const beta = [0.5, 0.5, 0.8, 0.25];
   for (const t of [0, 0.1, 0.5, 0.9]) {
     checks++;
-    const atLocus = invariants(makeHyperpolygon(0.5, 0, t, beta, false));
+    const atLocusRes = makeHyperpolygon(0.5, 0, t, beta, false);
+    const atLocus = invariants(atLocusRes);
     const atOffset = invariants(makeHyperpolygon(0.5 - 1e-4, 0, t, beta, false));
     const beyond = invariants(makeHyperpolygon(0.5 + 1e-4, 0, t, beta, false));
-    // bit-exact: the retry evaluates the identical pair at r = 0.5 - 1e-4
-    let exact = true;
-    for (let i = 0; i < 4 && exact; i++) {
-      if (atLocus.yN[i] !== atOffset.yN[i]) exact = false;
-    }
-    for (let i = 0; i < 9 && exact; i++) {
-      if (atLocus.vN[i] !== atOffset.vN[i]) exact = false;
-    }
-    if (!exact) fail(`[C] locus rep != direct solve at r = 0.5 - 1e-4 (t=${t})`);
-    // neighbor branch: vertex norms agree with the r = 0.5 + 1e-4 solve to
-    // well below display precision (measured ~2e-6 absolute, scale ~1)
-    const scale = Math.max(1e-6, ...beyond.vN);
-    const wV = Math.max(...atLocus.vN.map((v, k) => Math.abs(v - beyond.vN[k])));
-    if (!(wV <= 1e-4 * scale)) {
-      fail(`[C] locus vs r=0.5+1e-4 branch: vertex-norm diff ${wV.toExponential(2)} of scale ${scale.toExponential(2)} (t=${t})`);
+    if (atLocusRes.accuracy.su2Norm > 1e-9) {
+      // bit-exact: the retry evaluates the identical pair at r = 0.5 - 1e-4
+      let exact = true;
+      for (let i = 0; i < 4 && exact; i++) {
+        if (atLocus.yN[i] !== atOffset.yN[i]) exact = false;
+      }
+      for (let i = 0; i < 9 && exact; i++) {
+        if (atLocus.vN[i] !== atOffset.vN[i]) exact = false;
+      }
+      if (!exact) fail(`[C] locus rep != direct solve at r = 0.5 - 1e-4 (t=${t})`);
+      // neighbor branch: vertex norms agree with the r = 0.5 + 1e-4 solve to
+      // well below display precision (measured ~2e-6 absolute, scale ~1)
+      const scale = Math.max(1e-6, ...beyond.vN);
+      const wV = Math.max(...atLocus.vN.map((v, k) => Math.abs(v - beyond.vN[k])));
+      if (!(wV <= 1e-4 * scale)) {
+        fail(`[C] locus vs r=0.5+1e-4 branch: vertex-norm diff ${wV.toExponential(2)} of scale ${scale.toExponential(2)} (t=${t})`);
+      }
+    } else {
+      // clean locus solve: assert second-order smooth continuation.
+      // The closure vertex vN[8] is EXCLUDED: it is the rep's su(2)
+      // residual, not a polygon invariant — at the coherent cycle-2 sig the
+      // theta = 0 offsets r = 0.5 +- 2e-4 sit in the documented rescue-tier
+      // band (su2 ~ 6.6e-12, well under every bar) and D2 of that noise is
+      // meaningless. Its magnitude stays bounded by the residual bars in
+      // [A]/[B]/[E]; branch continuity is asserted on v0..v7 and the yN.
+      const atM2 = invariants(makeHyperpolygon(0.5 - 2e-4, 0, t, beta, false));
+      const atP2 = invariants(makeHyperpolygon(0.5 + 2e-4, 0, t, beta, false));
+      let bad = false;
+      const d2ok = (o, l, b, m2, p2) => {
+        const d1 = o + b - 2 * l;
+        const d2 = m2 + p2 - 2 * l;
+        return Math.abs(d2 / 4 - d1) <= 0.3 * Math.max(Math.abs(d1), Math.abs(d2) / 4) + 1e-12;
+      };
+      for (let i = 0; i < 4 && !bad; i++) {
+        bad = !d2ok(atOffset.yN[i], atLocus.yN[i], beyond.yN[i], atM2.yN[i], atP2.yN[i]);
+      }
+      for (let i = 0; i < 8 && !bad; i++) {
+        bad = !d2ok(atOffset.vN[i], atLocus.vN[i], beyond.vN[i], atM2.vN[i], atP2.vN[i]);
+      }
+      if (bad) fail(`[C] clean locus rep does not continue the offset branch smoothly (t=${t})`);
     }
   }
   console.log(`    offset identity + neighbor branch ok (failures=${failures})`);

@@ -1,10 +1,10 @@
 // Hyperpolygon widget: live three.js view of the su(2) polygon computed by ./solver.js.
 // Loaded as an ES module after the vendored three.min.js and OrbitControls.js (global THREE).
 
-import { makeHyperpolygon, PERMUTE_23 } from "./solver.js";
+import { makeHyperpolygon, PERMUTE_23, starSlots, cycleSlots } from "./solver.js";
 import { makeOrientor } from "./orientation.js";
 import { shortSubsets, chamberInterval, applyBetaDrag, breakingSubsets } from "./chambers.js";
-import { makeSideView, probeExteriorMap } from "./sideview.js";
+import { makeSideView, probeExteriorMap, attachmentRs } from "./sideview.js";
 
 const T_SOLVE_MAX = 0.99;
 
@@ -12,6 +12,7 @@ const PALETTES = {
   light: {
     edgeA: 0xc0392b,
     edgeB: 0x2c5f8a,
+    edgeYellow: 0xd9a800,
     axes: 0xb0b0b0,
     markers: 0x808080,
     border: "#d0d0d0",
@@ -27,6 +28,7 @@ const PALETTES = {
   dark: {
     edgeA: 0xff6b5b,
     edgeB: 0x7ab3ff,
+    edgeYellow: 0xffd84d,
     axes: 0x555f6e,
     markers: 0x9aa4b2,
     border: "#3a414b",
@@ -148,6 +150,36 @@ function ensureSliderStyles() {
     "  border-color: var(--hp-amber);",
     "  color: var(--hp-amber);",
     "}",
+    // top-right overlay listing the chamber's three short pairs (task 1):
+    // each row names the two polygon sides of the pair and the exterior-
+    // sphere attachment point (r value) that pair indexes; the row turns
+    // yellow while its two sides are parallel (the straight pair)
+    "#hyperpolygon-widget .hp-pair-list {",
+    "  position: absolute;",
+    "  top: 8px;",
+    "  right: 8px;",
+    "  display: flex;",
+    "  flex-direction: column;",
+    "  gap: 3px;",
+    "  align-items: flex-end;",
+    "  pointer-events: none;",
+    "  font-size: 0.78em;",
+    "}",
+    "#hyperpolygon-widget .hp-pair-row {",
+    "  padding: 1px 7px;",
+    "  border: 1px solid var(--hp-box-bd);",
+    "  border-radius: 6px;",
+    "  background: var(--hp-pair-bg);",
+    "  color: var(--hp-box-tx);",
+    "  white-space: nowrap;",
+    "  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;",
+    "}",
+    "#hyperpolygon-widget .hp-pair-row.hp-straight {",
+    "  border-color: var(--hp-yellow);",
+    "  background: var(--hp-yellow-bg);",
+    "  color: var(--hp-yellow-tx);",
+    "  font-weight: 600;",
+    "}",
     "#hyperpolygon-widget {",
     "  --hp-red: #e9c2bd;",
     "  --hp-track: #c9cdd4;",
@@ -158,6 +190,10 @@ function ensureSliderStyles() {
     "  --hp-amber-bg: #f4e8d0;",
     "  --hp-btn-bd: #cfd4da;",
     "  --hp-btn-tx: #666e78;",
+    "  --hp-yellow: #a67c00;",
+    "  --hp-yellow-bg: #f6ecc2;",
+    "  --hp-yellow-tx: #7a5c00;",
+    "  --hp-pair-bg: rgba(255, 255, 255, 0.72);",
     "}",
     '[data-theme="dark"] #hyperpolygon-widget {',
     "  --hp-red: #6b3630;",
@@ -169,6 +205,10 @@ function ensureSliderStyles() {
     "  --hp-amber-bg: #453519;",
     "  --hp-btn-bd: #4a525e;",
     "  --hp-btn-tx: #a0a8b2;",
+    "  --hp-yellow: #e8c84a;",
+    "  --hp-yellow-bg: #453a19;",
+    "  --hp-yellow-tx: #e8c84a;",
+    "  --hp-pair-bg: rgba(20, 24, 30, 0.6);",
     "}",
   ].join("\n");
   document.head.appendChild(style);
@@ -187,28 +227,89 @@ function activate(container) {
   const chamberShorts = shortSubsets(beta);
   // which chamberShorts pair slot attaches at each exterior-sphere point
   // (south, equator, north): measured once at load from the polygon
-  // parallelism at the three attachment points (sideview.js). The slot
-  // map is chamber-independent (sideview.mjs [P]), so with the chamber
-  // locked at load this never needs re-probing; sphere SIZES update live
-  // with beta. Null entries (solver failure) fall back to the unused
-  // slots in fixed order so all three spheres exist.
+  // parallelism at the three attachment points (sideview.js). By the
+  // solver's coherent attachment assignment (starSig / cycleSig) the map is
+  // the constant [7,5,6] in EVERY chamber: south carries the chamber's
+  // short side of split {0,3}|{1,2}, equator of {0,1}|{2,3}, north of
+  // {0,2}|{1,3}. Crossing a wall (Cross Wall button) replaces one short
+  // pair by its complement and THAT point transfers to the complement while
+  // the other two points keep their pairs; the crossed sphere's size
+  // formula shrinks to zero exactly on the wall and regrows. Null probe
+  // entries (solver failure) fall back to the analytic rule (star/cycle
+  // slots — cycleSlots also covers exterior/dominant chambers, whose pair
+  // short sides are the cycle chamber's) and then to the unused slots in
+  // fixed order so all three spheres exist.
   const extMap = [null, null, null];
-  try {
-    const probed = probeExteriorMap(beta, chamberShorts).map;
-    for (let k = 0; k < 3; k++) extMap[k] = probed[k];
-  } catch (err) {
-    // leave nulls; the fill below restores the spec's three spheres
+  // Probe + fill: measured map (widget-exact solves), analytic fallback
+  // (coherent star/cycle reindexing rule), then spare slots so all three
+  // spheres exist. Runs at load and again after every Cross Wall flop (the
+  // crossed chamber's short pairs change; the attachment POINTS do not).
+  function fillExtMap() {
+    for (let k = 0; k < 3; k++) extMap[k] = null;
+    try {
+      const probed = probeExteriorMap(beta, chamberShorts).map;
+      for (let k = 0; k < 3; k++) extMap[k] = probed[k];
+    } catch (err) {
+      // leave nulls; the fills below restore the spec's three spheres
+    }
+    if (!PERMUTE_23) {
+      const analytic = starSlots(beta) || cycleSlots(beta);
+      if (analytic) {
+        for (let k = 0; k < 3; k++) if (extMap[k] === null) extMap[k] = analytic[k];
+      }
+    }
+    const spareSlots = [];
+    for (let s = 5; s <= 7; s++) if (extMap.indexOf(s) === -1) spareSlots.push(s);
+    for (let k = 0; k < 3; k++) {
+      if (extMap[k] === null && spareSlots.length > 0) extMap[k] = spareSlots.shift();
+    }
   }
-  const spareSlots = [];
-  for (let s = 5; s <= 7; s++) if (extMap.indexOf(s) === -1) spareSlots.push(s);
-  for (let k = 0; k < 3; k++) {
-    if (extMap[k] === null && spareSlots.length > 0) extMap[k] = spareSlots.shift();
-  }
+  fillExtMap();
   const canvasBox = document.createElement("div");
   canvasBox.style.width = "100%";
   canvasBox.style.height = "420px";
   canvasBox.style.boxSizing = "border-box";
+  canvasBox.style.position = "relative";
   container.appendChild(canvasBox);
+
+  // Top-right overlay (task 1): the chamber's three short pairs, one row
+  // per exterior sphere (south/equator/north at r = 0 / 0.5 / 1), each
+  // naming the two leg vectors that pair indexes. A row turns yellow
+  // while its two vectors are parallel — at the attachment point that
+  // pair is exactly the straight one, so the list indexes the spheres.
+  const pairList = document.createElement("div");
+  pairList.className = "hp-pair-list";
+  canvasBox.appendChild(pairList);
+  const pairRows = [];
+  for (let k = 0; k < 3; k++) {
+    const row = document.createElement("div");
+    row.className = "hp-pair-row";
+    pairList.appendChild(row);
+    pairRows.push(row);
+  }
+  const SUBS = ["\u2080", "\u2081", "\u2082", "\u2083"];
+  // side label for displayed leg j: the leg VECTOR v_j (from pts[2j] to
+  // pts[2j+2]), not the vertices — user correction 2026-09-14; the four
+  // vectors are v0..v3 and the bend points stay unlabeled.
+  const sideName = (j) => "v" + SUBS[j];
+  const attachTag = (k) => (k === 0 ? "r=0" : k === 1 ? "r=\u00bd" : "r=1");
+  function rebuildPairList() {
+    for (let k = 0; k < 3; k++) {
+      const S = extMap[k];
+      const I = S !== null && S !== undefined ? chamberShorts[S] : null;
+      if (!I || I.length !== 2) {
+        pairRows[k].textContent = attachTag(k) + ": \u2014";
+        pairRows[k].classList.remove("hp-straight");
+        pairRows[k].title = "exterior sphere at " + attachTag(k);
+        continue;
+      }
+      pairRows[k].textContent =
+        attachTag(k) + ": " + sideName(I[0]) + " \u2225 " + sideName(I[1]);
+      pairRows[k].title =
+        "short pair {" + I.join(",") + "} \u2014 indexes the exterior sphere at " + attachTag(k);
+    }
+  }
+  rebuildPairList();
 
   // side view (task list #5): the (r, theta, t) moduli portrait — central
   // sphere + three exterior spheres + the flow dot; sideview.js owns the
@@ -219,6 +320,169 @@ function activate(container) {
   sideBox.style.boxSizing = "border-box";
   sideBox.style.marginTop = "10px";
   container.appendChild(sideBox);
+
+  // SL(2,C) view (task 2): the real and imaginary parts of the traceless
+  // central moment map polygon (mu_SL, 3 + 3 = 6 real dimensions), drawn
+  // as two small three.js canvases. Collapsed by default; the summary
+  // toggles it. The U(1) phase gamma (the slider under t) rotates these
+  // polygons coordinatewise; the su(2) polygon is unaffected by gamma.
+  const slDetails = document.createElement("details");
+  slDetails.style.marginTop = "10px";
+  const slSummary = document.createElement("summary");
+  slSummary.textContent = "show SL(2,\u2102) polygons";
+  slSummary.style.cursor = "pointer";
+  slSummary.style.fontSize = "0.9em";
+  slDetails.appendChild(slSummary);
+  const slRow = document.createElement("div");
+  slRow.style.display = "flex";
+  slRow.style.flexWrap = "wrap";
+  slRow.style.gap = "10px";
+  slRow.style.marginTop = "8px";
+  slDetails.appendChild(slRow);
+  container.appendChild(slDetails);
+
+  const SL_SEG = 5; // 4 leg edges + the v4 -> v0 closing segment
+  function makeSlView(tag) {
+    const host = document.createElement("div");
+    host.style.flex = "1 1 300px";
+    host.style.height = "300px";
+    host.style.minWidth = "240px";
+    host.style.position = "relative";
+    host.style.boxSizing = "border-box";
+    host.style.border = "1px solid " + palette().border;
+    slRow.appendChild(host);
+    const tagEl = document.createElement("div");
+    tagEl.textContent = tag;
+    tagEl.style.position = "absolute";
+    tagEl.style.top = "6px";
+    tagEl.style.left = "8px";
+    tagEl.style.fontSize = "0.8em";
+    tagEl.style.color = "var(--hp-box-tx)";
+    tagEl.style.pointerEvents = "none";
+    host.appendChild(tagEl);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setClearColor(0x000000, 0);
+    renderer.domElement.style.display = "block";
+    renderer.domElement.style.width = "100%";
+    renderer.domElement.style.height = "100%";
+    host.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    camera.position.set(1.3, 0.9, 1.6);
+    camera.lookAt(0, 0, 0);
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 0, 0);
+
+    const axExtent = 1.2;
+    const axGeom = new THREE.BufferGeometry();
+    axGeom.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(
+        [
+          -axExtent, 0, 0, axExtent, 0, 0,
+          0, -axExtent, 0, 0, axExtent, 0,
+          0, 0, -axExtent, 0, 0, axExtent,
+        ],
+        3
+      )
+    );
+    const axMat = new THREE.LineBasicMaterial({ color: 0xb0b0b0 });
+    scene.add(new THREE.LineSegments(axGeom, axMat));
+
+    const pos = new Float32Array(SL_SEG * 2 * 3);
+    const col = new Float32Array(SL_SEG * 2 * 3);
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.LineBasicMaterial({ vertexColors: true });
+    scene.add(new THREE.LineSegments(geom, mat));
+
+    const markPos = new Float32Array(5 * 3);
+    const markGeom = new THREE.BufferGeometry();
+    markGeom.setAttribute("position", new THREE.BufferAttribute(markPos, 3));
+    const markMat = new THREE.PointsMaterial({ size: 4, sizeAttenuation: false });
+    scene.add(new THREE.Points(markGeom, markMat));
+
+    function resize() {
+      const w = host.clientWidth;
+      const h = host.clientHeight;
+      if (w === 0 || h === 0) return;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    new ResizeObserver(resize).observe(host);
+    resize();
+
+    return {
+      host: host,
+      renderer: renderer,
+      scene: scene,
+      camera: camera,
+      controls: controls,
+      axMat: axMat,
+      markMat: markMat,
+      pos: pos,
+      col: col,
+      geom: geom,
+      markPos: markPos,
+      markGeom: markGeom,
+      setBorder: (c) => {
+        host.style.border = "1px solid " + c;
+      },
+    };
+  }
+  const slRe = makeSlView("Re \u03bc\u209b\u2097");
+  const slIm = makeSlView("Im \u03bc\u209b\u2097");
+  // gamma = 0 base data from the last solve (res.sl2); the displayed
+  // polygons are the e^{i·gamma} rotation of these
+  let sl2Base = null;
+  const SL_SEG_ENDS = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 4],
+    [4, 0],
+  ];
+  // Rewrite both SL(2,C) canvases from sl2Base rotated by the current
+  // gamma: each complex coordinate z (of Re and Im arrays) maps to
+  // e^{i·gamma} z, i.e. real' = cos·real − sin·imag, imag' = sin·real +
+  // cos·imag — coordinatewise, exactly the U(1) action on y. At gamma = 0
+  // this writes the base data bit-exactly (cos 0 = 1, sin 0 = 0).
+  function updateSlViews() {
+    if (!sl2Base) return;
+    const g = parseFloat(gammaInput.value) * Math.PI;
+    const c = Math.cos(g);
+    const s = Math.sin(g);
+    for (let vi = 0; vi < 2; vi++) {
+      const view = vi === 0 ? slRe : slIm;
+      const isIm = vi === 1;
+      for (let k = 0; k < 5; k++) {
+        for (let j = 0; j < 3; j++) {
+          const re = sl2Base.real[k][j];
+          const im = sl2Base.imag[k][j];
+          view.markPos[k * 3 + j] = isIm ? s * re + c * im : c * re - s * im;
+        }
+      }
+      for (let si = 0; si < SL_SEG; si++) {
+        for (let e = 0; e < 2; e++) {
+          const k = SL_SEG_ENDS[si][e];
+          const idx = (si * 2 + e) * 3;
+          view.pos[idx] = view.markPos[k * 3];
+          view.pos[idx + 1] = view.markPos[k * 3 + 1];
+          view.pos[idx + 2] = view.markPos[k * 3 + 2];
+        }
+      }
+      view.geom.attributes.position.needsUpdate = true;
+      view.geom.computeBoundingSphere();
+      view.markGeom.attributes.position.needsUpdate = true;
+      view.markGeom.computeBoundingSphere();
+    }
+  }
 
   const controlsRow = document.createElement("div");
   controlsRow.style.display = "flex";
@@ -283,6 +547,36 @@ function activate(container) {
   const markMat = new THREE.PointsMaterial({ size: 4, sizeAttenuation: false });
   polyGroup.add(new THREE.Points(markGeom, markMat));
 
+  // Edge labels (task 1): one sprite per displayed leg, drawn into a
+  // canvas texture (crisp at any zoom, theme-colored via applyColors).
+  // The sprite sits at the midpoint of the leg segment and names the leg
+  // VECTOR v_j (j = 0..3); scale follows the polygon scale so the labels
+  // shrink/grow with the drawing. The bend points stay unlabeled.
+  const sideLabelSprites = [];
+  function drawLabelTexture(sp, text, colorCss) {
+    const pad = 14;
+    const fontPx = 44;
+    const fontSpec = fontPx + "px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    const cnv = document.createElement("canvas");
+    let ctx = cnv.getContext("2d");
+    ctx.font = fontSpec;
+    const w = Math.ceil(ctx.measureText(text).width) + pad * 2;
+    const h = fontPx + pad * 2;
+    cnv.width = w;
+    cnv.height = h;
+    ctx = cnv.getContext("2d");
+    ctx.font = fontSpec;
+    ctx.fillStyle = colorCss;
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, pad, h / 2);
+    const tex = new THREE.CanvasTexture(cnv);
+    tex.minFilter = THREE.LinearFilter;
+    if (sp.material.map) sp.material.map.dispose();
+    sp.material.map = tex;
+    sp.material.needsUpdate = true;
+    sp.userData.aspect = w / h;
+  }
+
   const orientor = makeOrientor();
   let lastVerts = null;
   let lastInput = -1e9;
@@ -290,8 +584,78 @@ function activate(container) {
   // side-view scene; created below (applyColors refreshes its theme too)
   const sideView = makeSideView(sideBox, { getPalette: palette });
 
+  for (let i = 0; i < 4; i++) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false }));
+    sp.renderOrder = 10;
+    polyGroup.add(sp);
+    sideLabelSprites.push(sp);
+    drawLabelTexture(sp, sideName(i), palette().caption);
+  }
+
+  // Task 1 parallel-pair state. legSine[p] is the sine of the angle
+  // between the v-side directions of LEG_PAIRS[p] (zero = parallel);
+  // threshold matches sideview.js's probe tolerance. A pair entering
+  // parallelism fires ONE yellow blink (a smooth in-and-out pulse over
+  // BLINK_PERIOD seconds, played in the render loop); while a pair stays
+  // parallel (the straight pair at an attachment snap) both v-sides hold
+  // solid yellow.
+  const LEG_PAIRS = [
+    [0, 1],
+    [0, 2],
+    [0, 3],
+    [1, 2],
+    [1, 3],
+    [2, 3],
+  ];
+  const PAIR_SINE_TOL = 1e-3;
+  const BLINK_PERIOD = 0.9;
+  const legSine = new Array(6).fill(Infinity);
+  const legParallel = new Array(6).fill(false);
+  let blinkPair = -1;
+  let blinkStart = -1e9;
+  // base edge colors for the blink lerp (recomputed from the palette in
+  // applyColors, matched against the solver's segment order)
+  const yellowCol = new THREE.Color();
+  function legPairIndex(a, b) {
+    for (let p = 0; p < 6; p++) {
+      if (LEG_PAIRS[p][0] === a && LEG_PAIRS[p][1] === b) return p;
+    }
+    return -1;
+  }
+  // per-frame yellow overrides on the segment color buffer (base colors
+  // were written by applyColors)
+  function updateEdgeColors(now) {
+    let touched = false;
+    for (let p = 0; p < 6; p++) {
+      let f = 0;
+      if (legParallel[p]) {
+        f = 1;
+      } else if (p === blinkPair) {
+        const ph = (now - blinkStart) / BLINK_PERIOD;
+        if (ph >= 0 && ph < 1) f = Math.sin(Math.PI * ph);
+        else blinkPair = -1;
+      }
+      if (f > 0) {
+        const a = LEG_PAIRS[p][0];
+        const b = LEG_PAIRS[p][1];
+        const segs = [2 * a, 2 * b];
+        for (let s = 0; s < 2; s++) {
+          for (let k = 0; k < 2; k++) {
+            const idx = (segs[s] * 2 + k) * 3;
+            colArr[idx] += (yellowCol.r - colArr[idx]) * f;
+            colArr[idx + 1] += (yellowCol.g - colArr[idx + 1]) * f;
+            colArr[idx + 2] += (yellowCol.b - colArr[idx + 2]) * f;
+          }
+        }
+        touched = true;
+      }
+    }
+    if (touched) polyGeom.attributes.color.needsUpdate = true;
+  }
+
   const colA = new THREE.Color();
   const colB = new THREE.Color();
+  const grayCol = new THREE.Color();
 
   function applyColors() {
     const pal = palette();
@@ -299,6 +663,8 @@ function activate(container) {
     markMat.color.setHex(pal.markers);
     colA.setHex(pal.edgeA);
     colB.setHex(pal.edgeB);
+    yellowCol.setHex(pal.edgeYellow);
+    grayCol.setHex(pal.markers);
     for (let seg = 0; seg < 8; seg++) {
       const c = seg % 2 === 0 ? colA : colB;
       for (let k = 0; k < 2; k++) {
@@ -313,6 +679,26 @@ function activate(container) {
     caption.style.color = pal.caption;
     betaHeader.style.color = pal.caption;
     chamberLabel.style.color = pal.caption;
+    // edge-label sprites: redraw the textures in the theme color
+    for (let i = 0; i < sideLabelSprites.length; i++) {
+      drawLabelTexture(sideLabelSprites[i], sideName(i), pal.caption);
+    }
+    // SL(2,C) views (task 2): leg-colored edges, closing segment gray
+    for (const view of [slRe, slIm]) {
+      view.axMat.color.setHex(pal.axes);
+      view.markMat.color.setHex(pal.markers);
+      for (let si = 0; si < SL_SEG; si++) {
+        const c = si < 4 ? (si % 2 === 0 ? colA : colB) : grayCol;
+        for (let k = 0; k < 2; k++) {
+          const idx = (si * 2 + k) * 3;
+          view.col[idx] = c.r;
+          view.col[idx + 1] = c.g;
+          view.col[idx + 2] = c.b;
+        }
+      }
+      view.geom.attributes.color.needsUpdate = true;
+      view.setBorder(pal.border);
+    }
     if (sideView) sideView.refreshTheme();
   }
 
@@ -358,6 +744,91 @@ function activate(container) {
     }
     markGeom.attributes.position.needsUpdate = true;
     applyColors();
+
+    // Task 1: v-side parallelism. Each displayed leg's v-side direction
+    // is the segment (pts[2j], pts[2j+1]); two legs are parallel when the
+    // sine of the angle between their directions is ~0. Entering
+    // parallelism fires one yellow blink; staying parallel (the straight
+    // pair at an attachment snap) holds both v-sides solid yellow, and
+    // the matching row in the top-right short-pair list highlights.
+    const scale = Math.max.apply(
+      null,
+      pts.map((p) => Math.hypot(p[0], p[1], p[2]))
+    );
+    const dirs = [];
+    for (let j = 0; j < 4; j++) {
+      dirs.push([
+        pts[2 * j + 1][0] - pts[2 * j][0],
+        pts[2 * j + 1][1] - pts[2 * j][1],
+        pts[2 * j + 1][2] - pts[2 * j][2],
+      ]);
+    }
+    const nowSolve = performance.now();
+    for (let p = 0; p < 6; p++) {
+      const u = dirs[LEG_PAIRS[p][0]];
+      const v = dirs[LEG_PAIRS[p][1]];
+      const nu = Math.hypot(u[0], u[1], u[2]);
+      const nv = Math.hypot(v[0], v[1], v[2]);
+      const cr = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+      ];
+      const sine =
+        nu < 1e-12 || nv < 1e-12
+          ? Infinity
+          : Math.hypot(cr[0], cr[1], cr[2]) / (nu * nv);
+      if (sine < PAIR_SINE_TOL && !legParallel[p]) {
+        blinkPair = p;
+        blinkStart = nowSolve;
+      }
+      legSine[p] = sine;
+      legParallel[p] = sine < PAIR_SINE_TOL;
+    }
+    for (let k = 0; k < 3; k++) {
+      const S = extMap[k];
+      const I = S !== null && S !== undefined ? chamberShorts[S] : null;
+      let straight = false;
+      if (I && I.length === 2) {
+        const p = legPairIndex(Math.min(I[0], I[1]), Math.max(I[0], I[1]));
+        straight = p >= 0 && legParallel[p];
+      }
+      pairRows[k].classList.toggle("hp-straight", straight);
+    }
+
+    // Task 1: edge labels at the side midpoints, pushed away from the
+    // polygon centroid
+    let cen = [0, 0, 0];
+    for (let i = 0; i < 9; i++) {
+      cen[0] += pts[i][0];
+      cen[1] += pts[i][1];
+      cen[2] += pts[i][2];
+    }
+    cen = [cen[0] / 9, cen[1] / 9, cen[2] / 9];
+    const labelScale = 0.07 * scale;
+    for (let i = 0; i < 4; i++) {
+      const sp = sideLabelSprites[i];
+      const mx = (pts[2 * i][0] + pts[2 * i + 2][0]) / 2;
+      const my = (pts[2 * i][1] + pts[2 * i + 2][1]) / 2;
+      const mz = (pts[2 * i][2] + pts[2 * i + 2][2]) / 2;
+      let dx = mx - cen[0];
+      let dy = my - cen[1];
+      let dz = mz - cen[2];
+      const dn = Math.hypot(dx, dy, dz);
+      if (dn > 1e-9 * scale) {
+        const push = 0.06 * scale / dn;
+        sp.position.set(mx + dx * push, my + dy * push, mz + dz * push);
+      } else {
+        sp.position.set(mx, my, mz);
+      }
+      const asp = sp.userData.aspect || 3;
+      sp.scale.set(labelScale * asp, labelScale, 1);
+      sp.visible = labelScale > 1e-4;
+    }
+
+    // Task 2/3: SL(2,C) base data + the gamma rotation
+    sl2Base = res.sl2;
+    updateSlViews();
     const closure = Math.hypot(pts[8][0], pts[8][1], pts[8][2]);
     let text =
       "su(2) residual " +
@@ -380,7 +851,7 @@ function activate(container) {
     pending = true;
   }
 
-  function makeSlider(label, min, max, step, value, format, snaps = []) {
+  function makeSlider(label, min, max, step, value, format, snaps = [], noSolve = false) {
     const box = document.createElement("div");
     box.style.display = "flex";
     box.style.alignItems = "center";
@@ -415,7 +886,9 @@ function activate(container) {
         }
       }
       updateReadout();
-      scheduleSolve();
+      // noSolve sliders (gamma) drive only display-side updates — they
+      // must never trigger a solver run (rescue paths can cost 100 ms)
+      if (!noSolve) scheduleSolve();
     });
     box.appendChild(lab);
     box.appendChild(input);
@@ -439,6 +912,29 @@ function activate(container) {
   const tInput = makeSlider("t", 0, 1, 0.01, 0, (v) =>
     v >= 1 ? "t→∞" : (v / (1 - v)).toFixed(2)
   );
+  // gamma (task 3): the U(1) phase e^{i·gamma} acting on y. Moment-map
+  // preserving; fixes the su(2) polygon (|y|^2 and y†y are phase-
+  // invariant), rotates the SL(2,C) polygons coordinatewise, and in the
+  // side view rotates the dot along the level circles of the exterior
+  // spheres / paraboloids. t = 0 points are fixed (attachment points and
+  // the apex are on the rotation axes), matching the moduli picture.
+  const gammaInput = makeSlider(
+    "γ",
+    -1,
+    1,
+    0.005,
+    0,
+    (v) => (v >= 1 ? "π" : v <= -1 ? "-π" : (v * Math.PI).toFixed(2)),
+    [{ value: 0, tol: 0.03 }],
+    true
+  );
+  gammaInput.title =
+    "U(1) phase e^{i\u03b3} on y \u2014 rotates the SL(2,\u2102) polygons and the " +
+    "side-view dot along level circles; t = 0 points are fixed";
+  gammaInput.addEventListener("input", () => {
+    updateSlViews();
+    refreshSide();
+  });
 
   // "lim t→∞" (spec item 5): appears while the dot is on an exterior
   // sphere near the t -> infinity end (flowState.nearInfinity, t >= 0.9).
@@ -466,7 +962,8 @@ function activate(container) {
     const r = parseFloat(rInput.value);
     const theta = parseFloat(thetaInput.value) * Math.PI;
     const t = parseFloat(tInput.value);
-    const st = sideView.update(r, theta, t, beta, chamberShorts, extMap, tHover || t > 0);
+    const gamma = parseFloat(gammaInput.value) * Math.PI;
+    const st = sideView.update(r, theta, t, beta, chamberShorts, extMap, tHover || t > 0, gamma);
     // the dot is "near infinity" only on the exterior branch
     limBtn.style.display = st && st.nearInfinity ? "" : "none";
   }
@@ -801,6 +1298,11 @@ function activate(container) {
     for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) comp.push(n);
     chamberShorts[k] = comp;
     nudgeAcross(I, comp);
+    // the exterior-sphere <-> short-pair correspondence is chamber-
+    // dependent: re-probe the attachment map for the NEW chamber and
+    // rebuild the top-right pair list (task 1)
+    fillExtMap();
+    rebuildPairList();
     rebuildChamberBoxes();
     syncBetaSliders();
     scheduleSolve();
@@ -839,8 +1341,17 @@ function activate(container) {
       const q = orientor.update(lastVerts, dt, { idle: now - lastInput > 250 });
       polyGroup.quaternion.set(q[0], q[1], q[2], q[3]);
     }
+    // yellow edge overrides (straight pair solid, blink pulse decaying)
+    updateEdgeColors(now);
     controls.update();
     renderer.render(scene, camera);
+    // SL(2,C) views render only while expanded (task 2)
+    if (slDetails.open) {
+      for (const view of [slRe, slIm]) {
+        view.controls.update();
+        view.renderer.render(view.scene, view.camera);
+      }
+    }
   }
   loop();
 }

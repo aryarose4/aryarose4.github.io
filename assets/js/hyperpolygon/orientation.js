@@ -17,6 +17,13 @@
 const T_DISPLAY = 0.04; // s, exponential lag chasing the chord-pinning goal
 const T_SERVO = 0.5; // s, twist servo time constant
 const SERVO_MAX_RATE = 2.5; // rad/s cap on servo twist speed
+// Servo twist on/off switch (user request 2026-09-14): set to false to
+// disable the idle twist servo entirely — the displayed orientation then
+// only pins the chord to +y and the residual spin about the chord axis is
+// left to the solver data (the one-time twist canonicalization at
+// initialization still runs, it just no longer tracks). The orient.mjs
+// battery skips its servo-dependent assertions when this is false.
+export const SERVO_TWIST = true;
 const FREEZE_LO = 1e-3; // freeze when chordLen/scale < FREEZE_LO
 const FREEZE_HI = 1e-2; // unfreeze when chordLen/scale > FREEZE_HI (hysteresis)
 const SERVO_SIN_MIN = 0.25; // min |sin(angle between v1 and chord)| for servo to run
@@ -188,7 +195,7 @@ export function makeOrientor() {
 
       // 6. idle twist servo (a y-rotation cannot move the chord off +y;
       // rotating about +y by alpha shifts the xz-azimuth by -alpha)
-      if (flags && flags.idle) {
+      if (SERVO_TWIST && flags && flags.idle) {
         const psi = servoPsi(vertices, scale, chord, chordLen);
         if (psi !== null) {
           const dpsi = Math.max(

@@ -242,6 +242,89 @@ export function exteriorYDirection(reff, theta, beta0) {
   ];
 }
 
+// ===== Cycle-ansatz y-solve (cycle chambers, see the reindexing section) =====
+
+// Cycle x normal form: x = [[1, 1, 1, 0], [0, r e^{i theta}, 1 - r, 1]].
+// Straight pairs: r = 0 -> columns {0,1}; (r, theta) = (1/2, 0) -> {1,2};
+// r = 1 -> {0,2}. Column 3 = (0,1) is never parallel to any other column;
+// column 0 = (1,0) is fixed.
+export function buildXCycle(r, theta) {
+  return [
+    [C(1), C(1), C(1), C(0)],
+    [C(0), [r * Math.cos(theta), r * Math.sin(theta)], C(1 - r), C(1)],
+  ];
+}
+
+// The 7x7 complex linear system of the cycle y-solve: the same moment map
+// equations, unknown order y11, y12, y21, y31, y32, y41, y42 with y22
+// prescribed. For the cycle ansatz mu_C leg 3 reads y42 = 0 exactly (x[0][3]
+// = 0, x[1][3] = 1), so the free-scale prescription MUST move from y42 to
+// y22 — leg 1's second entry, finite across the whole r axis (the y32/y31
+// alternatives blow up at r = 0 like 1/re^{i theta}). With y22 = T the
+// right-hand side is exactly T * b1 (linear in T). Returns [M, b1].
+function ySolveSystemCycle(x) {
+  const M = Array.from({ length: 7 }, () => Array.from({ length: 7 }, () => C(0)));
+  const b1 = Array.from({ length: 7 }, () => C(0));
+  // mu_C rows
+  M[0][0] = x[0][0];
+  M[0][1] = x[1][0];
+  M[1][2] = x[0][1];
+  b1[1] = cScale(x[1][1], -1);
+  M[2][3] = x[0][2];
+  M[2][4] = x[1][2];
+  M[3][5] = x[0][3];
+  M[3][6] = x[1][3];
+  // mu_SL rows M11, M12, M21 (M22 is dependent on mu_C and M11)
+  M[4][0] = x[0][0];
+  M[4][2] = x[0][1];
+  M[4][3] = x[0][2];
+  M[4][5] = x[0][3];
+  M[5][1] = x[0][0];
+  M[5][4] = x[0][2];
+  M[5][6] = x[0][3];
+  b1[5] = cScale(x[0][1], -1);
+  M[6][0] = x[1][0];
+  M[6][2] = x[1][1];
+  M[6][3] = x[1][2];
+  M[6][5] = x[1][3];
+  return [M, b1];
+}
+
+// Cycle counterpart of solveY: y22 = t/(1-t) prescribed, then the whole y
+// scaled by (1 - reff) exactly like solveY. x must be built at reff
+// (buildXCycle). Nonsingular for all r < 1; the only pole is y32 ~ 1/(1-r),
+// cut by reff = 1-1e-5 exactly like the star ansatz's y41. Closed form of
+// the T=1 direction (x = buildXCycle(reff, theta), re := reff e^{i theta}):
+//   Y11 = 0; Y21 = -re; Y31 = re; Y32 = -re/(1-r); Y42 = 0;
+//   Y12 = re/(1-r) - 1; Y41 = re (re - (1-r)).
+// Returns null on a singular LU.
+export function solveYCycle(x, reff, t) {
+  const T = t / (1 - t);
+  const [M, b1] = ySolveSystemCycle(x);
+  const b = b1.map((v) => cScale(v, T));
+  const u = solveComplexLinear(M, b);
+  if (!u) return null;
+  const s = 1 - reff;
+  return [
+    [cScale(u[0], s), cScale(u[1], s)],
+    [cScale(u[2], s), cScale(C(T), s)],
+    [cScale(u[3], s), cScale(u[4], s)],
+    [cScale(u[5], s), cScale(u[6], s)],
+  ];
+}
+
+// Ansatze for solveCore: buildX makes the raw x normal form at (r, theta),
+// solveY solves the raw y for it. STAR_ANSATZ is the historical default, so
+// every existing call path is bit-exact.
+export const STAR_ANSATZ = {
+  buildX: (r, theta, beta0) => buildX(r, theta, beta0),
+  solveY: solveY,
+};
+export const CYCLE_ANSATZ = {
+  buildX: (r, theta) => buildXCycle(r, theta),
+  solveY: solveYCycle,
+};
+
 // U(1)^4 balancing: solves mu_U1(x', y') = beta exactly.
 // Torus action x -> x.diag(1/lam^2), y -> diag(lam^2).y; per leg
 // c/u - d u = 2 beta with u = lam^4 has the closed-form positive root.
@@ -833,15 +916,238 @@ function exteriorPairAt(reff, theta, beta, j) {
   return [x, y];
 }
 
+// ===== Interior-chamber classification (star reindexing) =====
+//
+// Interior chambers (no dominant leg) come in two flavors: the three short
+// size-2 subsets (one per pair-vs-pair split) either share a common index
+// ("star" chambers) or they do not ("cycle" chambers). The original x/y
+// ansatz below was built for the star chamber with short pairs {0,3}, {1,3},
+// {2,3} and distinguished index 3: (r, theta) parameterize the leg-3 column
+// of x, and the three snap points (0,0), (1/2,0), (1,0) are exactly where
+// the three short pairs become straight (column 3 parallel to columns 0, 2,
+// 1 respectively). Every OTHER star chamber is handled by an internal leg
+// reindexing (see starIndex / makeHyperpolygon): solve with the legs
+// permuted so the chamber's distinguished index lands in slot 3, then
+// unpermute the output. Cycle chambers are reindexed the same way onto the
+// cycle ansatz (see cycleIndex / cycleReindexed / buildXCycle above).
+
+// chambers.js tie convention for the short side of a split: strict less,
+// exact ties pick the lexicographically smaller side (for the three pair
+// splits that is always the pair containing leg 0).
+function shortPair01(beta, a, b) {
+  const c = [0, 1, 2, 3].filter((i) => i !== a && i !== b);
+  const sAB = beta[a] + beta[b];
+  const sCD = beta[c[0]] + beta[c[1]];
+  if (sAB < sCD) return true;
+  if (sCD < sAB) return false;
+  return Math.min(a, b) < Math.min(c[0], c[1]);
+}
+
+// The distinguished index of the star chamber containing beta: the common
+// element of the three short pairs, or -1 (cycle chamber, or a degenerate
+// on-wall tie pattern). Pure; the caller gates on dominantLeg(beta) < 0.
+export function starIndex(beta) {
+  const p01 = shortPair01(beta, 0, 1) ? [0, 1] : [2, 3];
+  const p02 = shortPair01(beta, 0, 2) ? [0, 2] : [1, 3];
+  const p03 = shortPair01(beta, 0, 3) ? [0, 3] : [1, 2];
+  for (const j of p01) {
+    if (p02.includes(j) && p03.includes(j)) return j;
+  }
+  return -1;
+}
+
+// Coherent attachment-point assignment (user request 2026-09-14, replacing
+// the per-chamber "others ascending" sig): the three pair-SPLITS map to the
+// three exterior-sphere attachment points ONCE AND FOR ALL, identically in
+// every chamber. Crossing a pair wall replaces one short pair by its
+// complement, and the wall's attachment point transfers to the complement
+// while the other two points keep their pairs — i.e. in split terms the
+// assignment is constant across the whole chamber graph:
+//   south (r,theta) = (0,0)   <-> split {0,3}|{1,2}  (shortSubsets slot 7)
+//   equator         = (1/2,0) <-> split {0,1}|{2,3}  (slot 5)
+//   north           = (1,0)   <-> split {0,2}|{1,3}  (slot 6)
+// so the attachment-slot map is the CONSTANT [7, 5, 6]. Anchored on the two
+// chambers whose charts were already fixed: the historical star-3 map
+// (south {0,3}, equator {2,3}, north {1,3}) and the cycle-0 ascending
+// schedule (south {1,2}, equator {2,3}, north {1,3}) — they already agree.
+// Each chart realizes the assignment by choosing which user legs occupy the
+// ansatz's first three columns (slots 0..2; slot 3 holds the distinguished
+// leg). Partner tables: for leg k, the other leg in k's side of each split.
+const PARTNER_T3 = [3, 2, 1, 0]; // sides {0,3} | {1,2}
+const PARTNER_T1 = [1, 0, 3, 2]; // sides {0,1} | {2,3}
+const PARTNER_T2 = [2, 3, 0, 1]; // sides {0,2} | {1,3}
+
+// The coherent sig for the star chamber with distinguished index j:
+// sig = [partner_T3(j), partner_T2(j), partner_T1(j), j] so that the
+// straight pairs south {sig[0], j}, north {sig[1], j}, equator {sig[2], j}
+// are exactly j's sides of splits T3, T2, T1. For j = 3 this is the
+// identity (historical path preserved bit-exactly).
+export function starSig(j) {
+  return [PARTNER_T3[j], PARTNER_T2[j], PARTNER_T1[j], j];
+}
+
+// The coherent sig for the cycle chamber with distinguished index m (also
+// the right sig for the exterior chamber dominant in m, whose pair short
+// sides are the same three pairs avoiding m): S/E/N are the sides of
+// splits T3/T1/T2 avoiding m, and the cycle chart's south {slot0,slot1} /
+// equator {slot1,slot2} / north {slot0,slot2} force
+// slot0 = S&N, slot1 = S&E, slot2 = E&N (each intersection is one leg).
+// For m = 0 this is the ascending schedule [1, 2, 3, 0].
+export function cycleSig(m) {
+  const S = m === 0 || m === 3 ? [1, 2] : [0, 3];
+  const E = m === 0 || m === 1 ? [2, 3] : [0, 1];
+  const N = m === 0 || m === 2 ? [1, 3] : [0, 2];
+  return [
+    S.filter((i) => N.includes(i))[0],
+    S.filter((i) => E.includes(i))[0],
+    E.filter((i) => N.includes(i))[0],
+    m,
+  ];
+}
+
+// The exterior-sphere attachment-slot rule for the star chamber containing
+// beta (null outside star chambers): derived from the coherent reindexing
+// starSig(j) — the straight pair at (r, theta) = (0,0), (1/2,0), (1,0) is
+// {sig[0], j}, {sig[2], j}, {sig[1], j}, and each pair maps to its
+// pair-split slot among the chamber's short size-2 subsets (5: {0,1}|{2,3},
+// 6: {0,2}|{1,3}, 7: {0,3}|{1,2}). By the coherent assignment this is the
+// chamber-independent map [7, 5, 6] for EVERY star chamber (previously only
+// j = 3). Used as the analytic expectation/fallback alongside the measured
+// probe.
+export function starSlots(beta) {
+  const j = starIndex(beta);
+  if (j < 0) return null;
+  const sig = starSig(j);
+  const slotOf = (a, b) => {
+    const key = Math.min(a, b) * 4 + Math.max(a, b);
+    if (key === 1 || key === 11) return 5;
+    if (key === 2 || key === 7) return 6;
+    return 7; // {0,3} or {1,2}
+  };
+  return [slotOf(sig[0], j), slotOf(sig[2], j), slotOf(sig[1], j)];
+}
+
+// Star-chamber solve by internal reindexing: sig[i] = the user leg solved in
+// internal slot i (slot 3 = the distinguished index j, slots 0..2 = the
+// remaining legs ordered by starSig's coherent attachment assignment). The
+// pipeline runs unchanged on the permuted beta; the output is unpermuted so
+// that returned column/row k is user leg k, mu_U1 = the user beta, and the
+// straight pairs at (r, theta) = (0,0), (1/2,0), (1,0) are {sig[0], j},
+// {sig[2], j}, {sig[1], j} — the chamber's short sides of the splits mapped
+// to those points, globally. For j = 3 sig is the identity and
+// makeHyperpolygon takes the direct solveCore path (bit-identical to the
+// historical behavior).
+function starReindexed(r, theta, t, beta, j, permute) {
+  const sig = starSig(j);
+  const betaP = sig.map((i) => beta[i]);
+  const inner = solveCore(r, theta, t, betaP, false);
+  const inv = [0, 0, 0, 0];
+  sig.forEach((c, i) => {
+    inv[c] = i;
+  });
+  const x = [0, 1].map((row) => inv.map((c) => inner.x[row][c]));
+  const y = inv.map((c) => inner.y[c]);
+  const [xd, yd] = permute ? swapLegs23(x, y) : [x, y];
+  const su2 = muSU2Coords(x, y);
+  return {
+    x: xd,
+    y: yd,
+    vertices: hyperpolygonVertices(xd, yd),
+    sl2: sl2Vertices(xd, yd),
+    accuracy: {
+      su2Norm: Math.hypot(su2[0], su2[1], su2[2]),
+      muU1Error: muU1Error(x, y, beta),
+      muCNorm: Math.max(...muC(x, y).map(cAbs2)) ** 0.5,
+      usedStable: inner.accuracy.usedStable,
+    },
+  };
+}
+
+// The distinguished index of the cycle chamber containing beta: the three
+// short size-2 subsets (same shortPair01 tie convention as starIndex) share
+// NO common element, and the distinguished index is the one missing from
+// their union (the union is then a 3-subset and the pairs are its three
+// pairs). -1 outside cycle chambers (star chambers have union size 4).
+// Pure; the caller gates on dominantLeg(beta) < 0 and starIndex(beta) < 0.
+export function cycleIndex(beta) {
+  const p01 = shortPair01(beta, 0, 1) ? [0, 1] : [2, 3];
+  const p02 = shortPair01(beta, 0, 2) ? [0, 2] : [1, 3];
+  const p03 = shortPair01(beta, 0, 3) ? [0, 3] : [1, 2];
+  const union = p01.concat(p02.filter((i) => !p01.includes(i)), p03.filter((i) => !p01.includes(i) && !p02.includes(i)));
+  if (union.length !== 3) return -1;
+  return [0, 1, 2, 3].find((i) => !union.includes(i));
+}
+
+// The exterior-sphere attachment-slot rule for the cycle chamber containing
+// beta (null outside cycle chambers — note an exterior/dominant chamber
+// shares the cycle chamber's pair short sides, so this also covers it):
+// derived from the coherent reindexing cycleSig(j) — the straight pair at
+// (r, theta) = (0,0), (1/2,0), (1,0) is {sig[0],sig[1]}, {sig[1],sig[2]},
+// {sig[0],sig[2]}, mapped to its pair-split slot with the same key as
+// starSlots (5: {0,1}|{2,3}, 6: {0,2}|{1,3}, 7: {0,3}|{1,2}). By the
+// coherent assignment this is the chamber-independent map [7, 5, 6] for
+// EVERY cycle chamber (previously only j = 0).
+export function cycleSlots(beta) {
+  const j = cycleIndex(beta);
+  if (j < 0) return null;
+  const sig = cycleSig(j);
+  const slotOf = (a, b) => {
+    const key = Math.min(a, b) * 4 + Math.max(a, b);
+    if (key === 1 || key === 11) return 5;
+    if (key === 2 || key === 7) return 6;
+    return 7; // {0,3} or {1,2}
+  };
+  return [slotOf(sig[0], sig[1]), slotOf(sig[1], sig[2]), slotOf(sig[0], sig[2])];
+}
+
+// Cycle-chamber solve by internal reindexing (mirror of starReindexed):
+// sig[i] = the user leg solved in internal slot i (slot 3 = the
+// distinguished index j, slots 0..2 = the remaining legs ordered by
+// cycleSig's coherent attachment assignment), the pipeline runs on the
+// CYCLE ansatz with the permuted beta, and the output is unpermuted so that
+// returned column/row k is user leg k and mu_U1 = the user beta. The
+// straight pairs at (r, theta) = (0,0), (1/2,0), (1,0) are
+// {sig[0],sig[1]}, {sig[1],sig[2]}, {sig[0],sig[2]} — the chamber's short
+// sides of the splits mapped to those points, globally. The permute
+// argument applies last, exactly as in starReindexed.
+function cycleReindexed(r, theta, t, beta, j, permute) {
+  const sig = cycleSig(j); // [slot0, slot1, slot2, j] — complete
+  const betaP = sig.map((i) => beta[i]);
+  const inner = solveCore(r, theta, t, betaP, false, CYCLE_ANSATZ);
+  const inv = [0, 0, 0, 0];
+  sig.forEach((c, i) => {
+    inv[c] = i;
+  });
+  const x = [0, 1].map((row) => inv.map((c) => inner.x[row][c]));
+  const y = inv.map((c) => inner.y[c]);
+  const [xd, yd] = permute ? swapLegs23(x, y) : [x, y];
+  const su2 = muSU2Coords(x, y);
+  return {
+    x: xd,
+    y: yd,
+    vertices: hyperpolygonVertices(xd, yd),
+    sl2: sl2Vertices(xd, yd),
+    accuracy: {
+      su2Norm: Math.hypot(su2[0], su2[1], su2[2]),
+      muU1Error: muU1Error(x, y, beta),
+      muCNorm: Math.max(...muC(x, y).map(cAbs2)) ** 0.5,
+      usedStable: inner.accuracy.usedStable,
+    },
+  };
+}
+
 
 // pre-swap of beta plus this module's permute=true output swap, which cancel
 // in the display). Set FALSE to disable the permutation: callers then pass
 // beta unchanged and permute = false, so the returned (x, y) is the solved
 // representative for the given beta directly. Either setting keeps the
 // displayed polygon leg j = user beta leg j and mu_U1 = the user beta.
-// Disabled per user request 2026-09-13; flip to true to restore the
-// historical widget-exact call pattern.
-export const PERMUTE_23 = true;
+// Disabled per user request 2026-09-13 (briefly true 2026-09-13..14,
+// then disabled again 2026-09-14 — the permutation is meant as a display
+// choice only and will be superseded by the crease-consistency traversal
+// fix, task list #6); flip to true to restore the historical widget-exact
+// call pattern.
+export const PERMUTE_23 = false;
 
 // Main entry: (r, theta, t, beta, permute) -> {x, y, vertices, sl2, accuracy}
 // permute = true (default) swaps quiver legs 2 and 3 in the returned (x, y)
@@ -852,6 +1158,16 @@ export const PERMUTE_23 = true;
 // for the given beta; the permuted pair does too only when beta2 = beta3.
 // Callers that pair permute = true with a pre-swapped beta should gate both
 // on PERMUTE_23 (see widget.js / sideview.js) so the swaps cancel together.
+//
+// Interior star chambers (the three short pairs share a common index j, see
+// starIndex) with j !== 3 are solved by internal reindexing: the pipeline
+// runs on the legs permuted so that j lands in slot 3, and the output is
+// unpermuted back to user indexing. The returned pair therefore always has
+// mu_U1 = the given beta and displayed leg k = user leg k; only the polygon
+// traversal order changes with the chamber, same class as the permute swap.
+// unpermute the output. Cycle chambers (starIndex < 0, cycleIndex >= 0, see
+// below) are reindexed the same way onto the cycle x ansatz
+// [[1,1,1,0],[0, r e^{i theta}, 1-r, 1]] via cycleReindexed / CYCLE_ANSATZ.
 export function makeHyperpolygon(r, theta, t, beta, permute = true) {
   // Exterior branch: in a dominant chamber (one beta >= the sum of the rest)
   // the t = 0 slice has no y = 0 solution; return the closed-form minimum
@@ -879,10 +1195,34 @@ export function makeHyperpolygon(r, theta, t, beta, permute = true) {
     }
   }
 
+  const sj = dom < 0 ? starIndex(beta) : -1;
+  if (sj >= 0 && sj !== 3) {
+    return starReindexed(r, theta, t, beta, sj, permute);
+  }
+  // Cycle chambers (interior, the three short pairs share no common index):
+  // solved by internal reindexing on the cycle ansatz, for every j (there is
+  // no historical cycle path to preserve).
+  if (dom < 0 && sj < 0) {
+    const cj = cycleIndex(beta);
+    if (cj >= 0) {
+      return cycleReindexed(r, theta, t, beta, cj, permute);
+    }
+  }
+  return solveCore(r, theta, t, beta, permute);
+}
+
+// The historical pipeline (raw ansatz -> balancing cascade -> endpoint and
+// locus retries), on the beta as given. Star chambers with j !== 3 enter
+// here only through starReindexed's permuted call, cycle chambers with any
+// j only through cycleReindexed's permuted call. The ansatz picks the x
+// normal form and its y-solve (STAR_ANSATZ = historical, CYCLE_ANSATZ = the
+// cycle chart); the balancing cascade and the retry machinery are ansatz-
+// generic (the orbit degeneracies live in the columns, not the beta ansatz).
+export function solveCore(r, theta, t, beta, permute, ansatz = STAR_ANSATZ) {
   const reff = Math.min(r, 1 - 1e-5);
-  const ySolveX = buildX(reff, theta, beta[0]);
-  const y0 = solveY(ySolveX, reff, t);
-  const x0 = buildX(r, theta, beta[0]);
+  const ySolveX = ansatz.buildX(reff, theta, beta[0]);
+  const y0 = ansatz.solveY(ySolveX, reff, t);
+  const x0 = ansatz.buildX(r, theta, beta[0]);
 
   const [pair0, usedStable] = balancedPair(x0, y0, beta);
   let pair = pair0;
@@ -918,8 +1258,8 @@ export function makeHyperpolygon(r, theta, t, beta, permute = true) {
     const offsets = atLowEnd ? [1e-9, 1e-6] : [1e-6, 1e-8];
     for (const off of offsets) {
       const reffAlt = atLowEnd ? off : 1 - off;
-      const x0Alt = buildX(reffAlt, theta, beta[0]);
-      const y0Alt = solveY(x0Alt, reffAlt, t);
+      const x0Alt = ansatz.buildX(reffAlt, theta, beta[0]);
+      const y0Alt = ansatz.solveY(x0Alt, reffAlt, t);
       if (!y0Alt) continue;
       const [cand] = balancedPair(x0Alt, y0Alt, beta);
       if (cand !== null && pairBetter(cand, pair)) {
@@ -961,8 +1301,8 @@ export function makeHyperpolygon(r, theta, t, beta, permute = true) {
   if (locusD <= 1e-4 && !(su2NormOf(pair) <= 1e-9)) {
     for (const off of [1e-4, 1e-3]) {
       const rAlt = r <= 0.5 ? 0.5 - off : 0.5 + off;
-      const x0Alt = buildX(rAlt, theta, beta[0]);
-      const y0Alt = solveY(x0Alt, rAlt, t);
+      const x0Alt = ansatz.buildX(rAlt, theta, beta[0]);
+      const y0Alt = ansatz.solveY(x0Alt, rAlt, t);
       if (!y0Alt) continue;
       const [cand] = balancedPair(x0Alt, y0Alt, beta);
       if (cand !== null && pairBetter(cand, pair)) {

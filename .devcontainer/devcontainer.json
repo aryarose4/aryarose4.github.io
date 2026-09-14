@@ -23,6 +23,13 @@
   // Forward the Jekyll server (8080) and livereload (35729) ports to the host
   "forwardPorts": [8080, 35729],
 
+  // Raise Kilo's hardcoded 32000 max-output-token clamp (KILO_EXPERIMENTAL_
+  // OUTPUT_TOKEN_MAX); the per-model limit.output in ~/.config/kilo/kilo.jsonc
+  // still caps each model individually.
+  "remoteEnv": {
+    "KILO_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "128000"
+  },
+
   "customizations": {
     "vscode": {
       "extensions": ["esbenp.prettier-vscode", "sissel.shopify-liquid", "yzhang.markdown-all-in-one", "kilocode.Kilo-Code"],

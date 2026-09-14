@@ -162,11 +162,19 @@ function tangentFrame(p) {
 // the flow when (r, theta) sits on it — poles accept any theta (theta is
 // degenerate there), the equator needs theta ~ 0. t is the RAW slider
 // value (1 allowed; the widget's T_SOLVE_MAX clamp is its own business).
+// gamma (task 3, optional, default 0) is the U(1) phase on y: on the
+// moduli portrait it rotates the dot along the LEVEL CIRCLES of the
+// exterior sphere (around the attachment-point axis n) or of the
+// paraboloid (around the apex normal n). The rotation leaves every t = 0
+// point fixed (the attachment point / paraboloid apex lies ON the
+// rotation axis), matching the fact that the U(1) action fixes t = 0.
+// gamma = 0 is a bit-exact no-op (cos 0 = 1, sin 0 = 0, guarded).
 // Returns null on any non-finite input; never throws for finite input.
-export function flowState(r, theta, t, beta, chamberShorts, extMap) {
+export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma) {
   if (!Number.isFinite(r) || !Number.isFinite(theta) || !Number.isFinite(t)) return null;
   if (!beta || beta.length !== 4) return null;
   for (let i = 0; i < 4; i++) if (!Number.isFinite(beta[i])) return null;
+  const g = Number.isFinite(gamma) ? gamma : 0;
 
   // Central-sphere size follows beta (centralArea formula above); every
   // attachment point, exterior center and paraboloid apex sits on THIS R.
@@ -188,8 +196,17 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap) {
     const n = unit3(p);
     // Side direction: yHat made tangent to the central sphere at p; at
     // the poles that is zero, so fall back to +x (the theta = 0 tangent).
+    // gamma rotates the side direction about the sphere axis n — the dot
+    // and the guide arc ride the rotated meridian (a level circle of the
+    // exterior sphere); the attachment (t = 0) and antipode stay fixed.
     let w = unit3(sub3(Y_HAT, scale3(n, dot3(Y_HAT, n))));
     if (!w) w = [1, 0, 0];
+    if (g !== 0) {
+      const cg = Math.cos(g);
+      const sg = Math.sin(g);
+      const ax = cross3(n, w);
+      w = [cg * w[0] + sg * ax[0], cg * w[1] + sg * ax[1], cg * w[2] + sg * ax[2]];
+    }
     const c = add3(p, scale3(n, rk));
     const climb = (alpha) => {
       const ca = Math.cos(alpha);
@@ -211,10 +228,22 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap) {
 
   // Central branch: the dot climbs the paraboloid z = rho^2/(2f) tangent
   // at p, opening along +n. phi(t) rises from 0 and saturates at PHI_CAP.
+  // gamma rotates the guide meridian u (and v with it) about the apex
+  // normal n: the dot moves along level circles of the paraboloid; the
+  // apex (t = 0) stays fixed. The drawn paraboloid is a surface of
+  // revolution about its own axis, so its point set is gamma-invariant.
   const p = spherePoint(r, theta, R);
   const frame = tangentFrame(p);
   const n = frame.n;
-  const u = frame.u;
+  let u = frame.u;
+  let v = frame.v;
+  if (g !== 0) {
+    const cg = Math.cos(g);
+    const sg = Math.sin(g);
+    const ax = cross3(n, u);
+    u = [cg * u[0] + sg * ax[0], cg * u[1] + sg * ax[1], cg * u[2] + sg * ax[2]];
+    v = cross3(n, u);
+  }
   let phi = t <= 0 ? 0 : t >= 1 ? PHI_CAP : Math.atan((PHI_K * t) / (1 - t));
   if (phi > PHI_CAP) phi = PHI_CAP;
   const rhoMax = PARAB_FOCAL * Math.tan(PHI_CAP);
@@ -230,7 +259,7 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap) {
     slot: null,
     dot: climb(phi),
     exterior: null,
-    paraboloid: { apex: p, u: u, v: frame.v, n: n, f: PARAB_FOCAL, cap: PHI_CAP },
+    paraboloid: { apex: p, u: u, v: v, n: n, f: PARAB_FOCAL, cap: PHI_CAP },
     arc: arc,
     nearInfinity: false,
   };
@@ -249,11 +278,14 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap) {
 // Infinity). The winning slot needs residual < PARALLEL_TOL and a
 // PARALLEL_RATIO margin over the runner-up; on failure the measurement
 // retries at a small theta (the documented theta = 0 solver stall
-// basin), else the attachment maps to null. Empirically the result is
-// the chamber-INDEPENDENT slot map [6, 5, 7] under the permuted call
-// pattern and [7, 5, 6] under the unpermuted one (the r-leg pairs with
-// leg 0 at r = 0 and leg 1 at r = 1; see PERMUTE_23 in solver.js),
-// with the parallel pair being that chamber's short side — see
+// basin), else the attachment maps to null. By the solver's coherent
+// attachment assignment (starSig / cycleSig, 2026-09-14) the result is the
+// chamber-INDEPENDENT slot map [7, 5, 6] under the unpermuted call pattern
+// in EVERY interior chamber — south carries the chamber's short side of
+// split {0,3}|{1,2}, equator of {0,1}|{2,3}, north of {0,2}|{1,3} — so
+// crossing a pair wall transfers only the crossed point's pair to its
+// complement ([6, 5, 7] under the permuted pattern; see PERMUTE_23 in
+// solver.js), with the parallel pair being that chamber's short side — see
 // dev/hyperpolygon/sideview.mjs [P]. Runs 3-6 solves, so call it on
 // beta changes, not per frame.
 export function probeExteriorMap(beta, chamberShorts) {
@@ -528,10 +560,12 @@ export function makeSideView(host, opts) {
   // frozen (belt-and-suspenders, same style as widget.js). Returns the
   // flow state (or null) so the widget can drive UI off it (the
   // "lim t -> infinity" button reads nearInfinity without a re-solve).
-  function update(r, theta, t, beta, chamberShorts, extMap, showParaboloid) {
+  // gamma (optional, default 0) is the U(1) level-circle phase — see
+  // flowState.
+  function update(r, theta, t, beta, chamberShorts, extMap, showParaboloid, gamma) {
     let st = null;
     try {
-      st = flowState(r, theta, t, beta, chamberShorts, extMap);
+      st = flowState(r, theta, t, beta, chamberShorts, extMap, gamma);
     } catch (e) {
       st = null;
     }
