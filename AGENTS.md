@@ -25,6 +25,56 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   (`mathematica/` and `dev/` are already there — keep that true for
   new folders).
 
+## Reasoning/output cap — how to avoid losing turns
+
+The model provider used to hard-cap every assistant turn at **32,000
+tokens of total generated output (reasoning + visible text combined)**
+— verified from the `kilo.db` message records (all `finish="length"`
+turns stopped at exactly 32000), and it WAS actually Kilo's own
+hardcoded `OUTPUT_TOKEN_MAX = 32000` clamp, not a provider limit
+(traced in the installed binary, 2026-09-14). A turn that hits the cap
+mid-reasoning returns `finish: "length"` and, if no visible text was
+emitted yet, the ENTIRE turn is discarded and surfaces as a
+"reasoning limit" error — hours of derivation can vanish. RAISED
+2026-09-14: the clamp is configurable via the env var
+`KILO_EXPERIMENTAL_OUTPUT_TOKEN_MAX` (effective cap =
+min(model.limit.output, env value) ?? 32000), set to 128000 in
+`.devcontainer/devcontainer.json` remoteEnv, with per-model
+`limit.output` overrides in `~/.config/kilo/kilo.jsonc` (glm-5.3-flash
+131072, deepseek-v4-flash-0731 943718; deepseek is then capped at the
+env 128000). Requires a window reload/container rebuild to reach the
+extension. The small-turns discipline below is still good hygiene
+(the deepseek cap is per-turn too, and long monolithic reasoning
+blocks remain fragile); work around the cap when needed:
+
+- Work in SMALL tool-call steps. Each tool call ends a reasoning
+  block and commits it — short bursts (the historical safe pattern is
+  ~1-2k reasoning per turn) can accumulate any amount of work; one
+  monolithic block cannot exceed 32k, ever. (Pre-raise hygiene; with
+  the raised cap a monolithic block can now run past 32k, but a cap
+  hit still discards the whole turn.)
+- NEVER attempt a full mathematical derivation in one unbroken
+  reasoning block. State the plan in a sentence or two, derive ONE
+  step, write the result down, then take the next step. If a chunk
+  needs more than a paragraph or two of chain-of-thought, split it.
+- CHECKPOINT partial conclusions to a scratch file (e.g.
+  `/tmp/kilo/notes-<topic>.md`, or a `dev/hyperpolygon/` scratch file
+  if it should survive) after each derived chunk — facts, formulas,
+  decisions, not prose. A cap hit then costs only the current
+  segment, and recovery = read the checkpoint, not re-derive.
+- Prefer delegating self-contained derivation/implementation chunks
+  to subagents (task tool, per Ground rules): each subagent turn has
+  its own output budget, and they should return SHORT summaries (their
+  reasoning doesn't consume the main thread's budget).
+- If a turn dies with the reasoning-limit error, do NOT retry the
+  same monolithic block: re-read the last checkpoint / the relevant
+  files and resume from the smallest next step.
+- Recovery sources for lost turns: `~/.local/share/kilo/log/*.log`
+  (line `reasoning-only length stop`) and
+  `~/.local/share/kilo/kilo.db` message table
+  (`json_extract(data,'$.finish')='length'` shows the token counts).
+  Checkpoints, not post-mortems, are the real fix.
+
 ## Math model (star-shaped quiver: central C^2, four C legs)
 
 - `beta` = 4 positive parabolic weights. Must not lie on a chamber wall
@@ -78,10 +128,12 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   PERMUTE_23 = false the widget displays the unpermuted solved
   representative (the notebook leg convention validate.mjs compares
   against); with PERMUTE_23 = true it uses the historical swapped
-  pattern. The flag was set false per user request 2026-09-13 and the
-  user subsequently flipped it back to TRUE (the working tree value,
-  display user-verified 2026-09-13 "looks great") — both settings are
-  user-approved; check the source for the live value. Displayed leg j
+   pattern. The flag was set false per user request 2026-09-13, flipped
+   back to TRUE by the user the same day (display user-verified "looks
+   great"), then set FALSE again 2026-09-14 per the user ("disable the
+   permute toggle for now") pending the crease-consistency traversal fix
+   (task list #6, which will supersede the flag) — both settings are
+   user-approved; check the source for the live value. Displayed leg j
   is user beta leg j under either setting, and
   mu_U1 = user beta under either setting. Harnesses pass
   `permute = false` where the
@@ -238,6 +290,175 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   dominant legs 2/3 via the swapped solve-beta (battery [E]).
   Regression-tested by the new dev/hyperpolygon/exterior.mjs battery
   (1524 checks, in run-validation.sh).
+  STAR REINDEXING (2026-09-14, user request "use an internal reindexing in
+  the solver"; user asked to address the STAR case first — cycle chambers
+  followed the same day, see the CYCLE REINDEXING paragraph below):
+  interior chambers (no dominant leg) come in two flavors — the three short
+  size-2 subsets (one per pair split) either share a common index j ("star",
+  4 chambers; in star-j, beta_j < s/4 strictly, so star chambers border only
+  cycle chambers across pair walls) or do not ("cycle", 4 chambers; j =
+  complement of the union). The notebook ansatz was built for
+  star-j3 (short pairs {0,3},{1,3},{2,3}; the (r,theta) = (0,0)/(1/2,0)/(1,0)
+  snap points make those three pairs straight via col3-parallelism).
+  makeHyperpolygon now dispatches: exterior branch first (unchanged), then
+  if dominantLeg < 0 and starIndex(beta) = j >= 0 and j !== 3 it calls
+   starReindexed — the historical pipeline runs UNCHANGED on the internally
+   permuted beta (sig = starSig(j), see the COHERENT ATTACHMENT ASSIGNMENT
+   paragraph below, so slot 3 = j; for
+   j = 3 sig is the identity and the direct solveCore path keeps the
+   historical bit-exact behavior, which is why validate.mjs's notebook beta
+   and the widget default are unaffected) — and the output is unpermuted to
+   user indexing: returned column/row k = user leg k, mu_U1 = USER beta,
+   vertices/sl2 built from the user-indexed pair (chord v0->v4 = user legs
+   {0,1} always; the permute argument still applies last). New exports:
+   `starIndex(beta)` (common index of the three short pairs or -1; tie
+   convention replicated from chambers.js pickShort: strict less, exact ties
+   pick the lex-smaller side = the pair containing leg 0) and `starSlots`
+   (beta) (the exterior-sphere attachment-slot rule [south, equator, north]:
+   derived from starSig — by the coherent assignment this is the CONSTANT
+   [7,5,6] in every star chamber). makeHyperpolygon was split into the
+   dispatcher plus
+   `solveCore` (the historical pipeline verbatim). Note the r = 1 straight
+   pair is straight only to O(1 - reff) ~ 1.7e-5 (the clean solve keeps the
+   documented reff = 1-1e-5 offset) — battery bar 1e-4 there, 1e-8 elsewhere.
+    The side view's exterior-sphere slot map is the CONSTANT [7,5,6] in
+    every chamber (the coherent assignment; sideview.mjs [P] measures and
+    asserts it across all 8 interior chambers), and widget.js fills null
+    probe entries from starSlots or
+    cycleSlots (PERMUTE_23 = false only;
+    the composed rule for the permuted pattern is not derived — the flag is
+    slated for obsolescence by task #6 anyway). Regression-tested by the new
+    dev/hyperpolygon/star.mjs battery (1391 checks, in run-validation.sh):
+    [A] 4 star chambers x (r,theta,t) grid residuals vs the USER beta, [B]
+    straight-pair parallelism at the snap points, [C] bitwise equivalence with
+    the manual permuted call (using the exported starSig), [D] starIndex
+    classification + the coherent starSlots == [7,5,6] assertions (incl. -1 on the
+    four cycle tuples), [E] cycle tuples now at full [A] residual bars
+    (raised 2026-09-14 when the cycle path landed).
+  CYCLE REINDEXING (2026-09-14, user ansatz, same-day task #8): interior
+  cycle chambers (starIndex < 0; `cycleIndex(beta)` returns the missing
+  index of the three short pairs' union, -1 for star/others) now solve by
+  the user-proposed ansatz, with the distinguished leg j permuted into slot
+  3 and the other three ordered by cycleSig(j) (see the COHERENT ATTACHMENT
+  ASSIGNMENT paragraph below; for j = 0 cycleSig is the ascending schedule
+  the user proposed: straight pairs at
+  (r,theta) = (0,0)/(1/2,0)/(1,0) are {s0,s1}/{s1,s2}/{s0,s2} in SLOT
+  indexing):
+  x = [[1,1,1,0],[0, r e^{i theta}, 1-r, 1]] (`buildXCycle`, no beta factor;
+  col3 = (0,1) distinguished, never parallel to any other column; col0 =
+  (1,0) fixed; the only degenerate points are exactly the three snaps).
+  CRITICAL prescription change: the y-solve's t/(1-t) entry CANNOT stay y42 —
+  for this x, mu_C leg 3 (x[0][3] = 0, x[1][3] = 1) forces y42 = 0. The
+  prescription moved to y22 (`ySolveSystemCycle` + `solveYCycle`, unknown
+  order y11,y12,y21,y31,y32,y41,y42; mu_C leg 1's row carries the T to the
+  RHS). Closed-form direction: Y11=0, Y21=-re, Y31=re, Y32=-re/(1-r),
+  Y42=0, Y12=re/(1-r)-1, Y41=re(re-(1-r)) with re = reff e^{i theta}; the
+  (1-reff) scale makes y12 EXACTLY T*D (D = re - (1-reff), the same locus
+  defect as the star ansatz) and cancels the single 1/(1-r) pole on Y32
+  unless reff is capped at 1-1e-5. At r=0 y-rows 2,3 vanish (d=0 balancing
+  branch), at r=1 row 1 does. solveCore gained an `ansatz` argument
+  ({buildX(r,theta,beta0), solveY(x,reff,t)}; exported STAR_ANSATZ /
+  CYCLE_ANSATZ; default STAR keeps every historical path bit-exact —
+  validate.mjs diffs unchanged) and is now exported; the endpoint/locus
+  retry machinery applies verbatim (the cycle degenerations are the same
+  orbit-coincidence class: r=0 coincides cols 0,1, r=1 cols 0,2, locus the
+  generic cols 1,2; NO new gated retries were needed). `cycleReindexed`
+  mirrors starReindexed (permuted beta -> unpermuted output, mu_U1 = user
+  beta, permute argument last; uniform for all j incl. j=3 — no historical
+   path to preserve). `cycleSlots(beta)`: derived from cycleSig — by the
+   coherent assignment the CONSTANT [7,5,6]; also classifies EXTERIOR
+   chambers (cycleIndex >= 0 there: their pair short sides are the three
+   pairs avoiding the dominant leg, union = the other three legs). GLUE (user
+   question "how does this glue when crossing chambers from star to cycle"):
+   measured (cycle.mjs [G], 12 walls x 8 slider points x 2 sides, eps-nudged
+   1e-3 in-chamber): BOTH sides solve clean everywhere near every wall
+   (asserted). Under the ORIGINAL ascending sigs the fixed-slider off-wall
+   shape jump was 0.25-0.58 of polygon scale on 8 of 12 walls (constant in
+   eps, read as intrinsic); under the COHERENT sigs (see the COHERENT
+   ATTACHMENT ASSIGNMENT paragraph below) it dropped to ~2.5e-3-2.9e-3 on
+   ALL 12 walls — the charts' parameterizations now align in a full wall
+   neighborhood, so the flop jump is NOT intrinsic. At the exact on-wall
+   tuple both charts still select different branches (INFO; not
+   user-visible). The y-side per-leg |y_i|^2 relative deltas between the
+   charts persist (up to 1.0 — SL(2,C) view can still change on a flop).
+   Accepted known issue. Regression-tested by the new dev/hyperpolygon/cycle.mjs
+   battery (4558 checks, in run-validation.sh): [A] grid over the 4 cycle
+   chambers (star.mjs's CYCLES tuples), [B] snap straightness incl. the
+   r=1 1e-4 bar, [C] bitwise equivalence vs hand-unpermuted
+   solveCore(...,CYCLE_ANSATZ), [C2] closed-form y cross-check 1e-12, [D]
+   cycleIndex/cycleSlots classification + coherent [7,5,6] assertions
+   (incl. the 4 exterior tuples), [D2] cross-wall coherence battery (24
+   crossings: pair transfer, family flip, constant map, south straight
+   pair), [E] (1/2,0) locus disk + band, [F]
+   seeded fuzz, [S] scaled betas, [G] the glue measurement above; plus
+   widget-load-path smoke (probeExteriorMap == cycleSlots for all 4 cycle
+   tuples). sideview.mjs [P]/[E] and locus.mjs [C] were updated by the fix:
+   sideview's expected map now consults starSlots then cycleSlots (the probe
+   MEASURES the cycle rule correctly); locus.mjs [C]'s beta turned out to be
+   a cycle chamber that previously STALLED at the locus — it now solves
+   cleanly, so [C] is regime-aware (stall -> old bit-exact-offset-identity
+   check; clean -> second-difference scaling check D2(2d) ~ 4 D2(d) that
+   survives the even-in-r V-shaped invariants at the locus; the closure
+   vertex vN[8] is EXCLUDED from the clean-regime D2 comparison — it is the
+   rep's su(2) residual, not a polygon invariant, and at the coherent
+   cycle-2 sig the theta=0 offsets r = 0.5 +- 2e-4 sit in the documented
+   rescue-tier band (su2 ~ 6.6e-12, under every bar) where D2 of that noise
+   is meaningless; its size stays bounded by the [A]/[B]/[E] residual bars).
+  COHERENT ATTACHMENT ASSIGNMENT (2026-09-14, user request: "crossing a
+  chamber can replace one short pair with its complement, and the
+  associated intersection point should transfer to the complement while the
+  other two pairs stay with their intersection points... we need to
+  intentionally pick the first three columns of x in the solver ansatz to
+  make this all coherent. Previous agents have claimed this isn't possible
+  but I'm rather certain it is." — the user was RIGHT): the three
+  pair-SPLITS map to the three exterior-sphere attachment points ONCE AND
+  FOR ALL, identically in every chamber — south (0,0) <-> {0,3}|{1,2}
+  (shortSubsets slot 7), equator (1/2,0) <-> {0,1}|{2,3} (slot 5), north
+  (1,0) <-> {0,2}|{1,3} (slot 6) — so the attachment-slot map is the
+  CONSTANT [7,5,6] and crossing any pair wall transfers exactly the crossed
+  point's pair to its complement. Feasibility (why it IS possible): in the
+  star chart the straight pairs at south/equator/north are
+  {sig[0],j}/{sig[2],j}/{sig[1],j} and in the cycle chart
+  {sig[0],sig[1]}/{sig[1],sig[2]}/{sig[0],sig[2]} — each chart's 3! choice
+  of which user legs occupy the ansatz's first three columns (slots 0..2;
+  slot 3 = the distinguished leg) realizes ANY bijection of the chamber's
+  three short pairs to the three points (cycle: slot0 = S&N, slot1 = S&E,
+  slot2 = E&N for desired south/equator/north pairs S/E/N). The earlier
+  "others ascending" sig realized a DIFFERENT split->point map per chamber
+  — that was the incoherence, not a structural obstruction. Anchored on the
+  two chambers already fixed in the code (historical star-3 map and the
+  user's ascending cycle-0 schedule, which already agree), the assignment
+  is implemented by the exported partner-table helpers `starSig(j)` =
+  [T3p(j), T2p(j), T1p(j), j] (T1/T2/T3 partner of leg k in k's side of the
+  split; sig = [P3,P2,P1] tables [3,2,1,0]/[2,3,0,1]/[1,0,3,2] indexed by j)
+  and `cycleSig(m)` = [S&N, S&E, E&N, m] over the T3/T1/T2 sides avoiding m
+  — sigs per chamber: star [3,2,1,0]/[2,3,0,1]/[1,0,3,2]/[0,1,2,3] for
+  j = 0..3, cycle [1,2,3,0]/[0,3,2,1]/[3,0,1,2]/[2,1,0,3] for m = 0..3;
+  star-3 and cycle-0 are UNCHANGED (their paths stay bit-exact; validate.mjs
+  legacy diffs unchanged). starReindexed/cycleReindexed/starSlots/cycleSlots
+  all consume the shared helpers (one source of truth); exterior chambers
+  (whose pair short sides are the three pairs avoiding the dominant leg)
+  get the same analytic map through cycleSlots. GLUE CONSEQUENCE (cycle.mjs
+  [G] re-measured): the coherent charts align the two parameterizations in
+  a full neighborhood of every star<->cycle wall, not just at the snaps —
+  the fixed-slider off-wall shape jump dropped from 0.25-0.58 of polygon
+  scale (8 of 12 walls, old sigs) to ~2.5e-3-2.9e-3 on ALL 12 walls (each
+  wall's straight-pair schedules now coincide at 2 of 3 snaps, differing
+  only at the crossed wall's point). At the EXACT on-wall tuple both charts
+  still solve clean but select different branches (vertexRel 0.18-0.58 at
+  the sampled generic tuples) — not user-visible: drags lock the chamber
+  and Cross Wall nudges off-wall. The y-side per-leg |y_i|^2 relative
+  deltas between the charts persist (up to 1.0 — y rows carry the residual
+  gauge-slice/parameterization difference; the SL(2,C) view can still
+  change on a flop). Regression-tested by cycle.mjs [D2] (24 wall crossings
+  over all 8 interior chamber tuples x 3 pair walls: crossed slot's pair ->
+  complement, other slots unchanged, family flips star<->cycle, both maps
+  == [7,5,6], the crossed chamber's displayed south straight pair == its
+  new T3 short side, sphere deficits positive on both sides with the fixed
+  side's imbalance flipping) and the [7,5,6] constancy assertions in
+  star.mjs [D] / cycle.mjs [D] (incl. the 4 exterior tuples); sideview.mjs
+  [P] widened to all 8 interior chambers (measured map [7,5,6] everywhere,
+  worst mapped residual 2e-16, runner-up margin >= 1:3e15).
 - `assets/js/hyperpolygon/orientation.js` — display-orientation servo,
   dependency-free ES module (read this before touching widget
   orientation). `makeOrientor()` returns `{ update(vertices, dt,
@@ -256,8 +477,15 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   sweeps the whole sphere (within 0.13° of ±y) and any fixed
   spin-reference vertex becomes parallel to the chord somewhere in the
   box (measured), so stateless canonical rules provably flip/spin on
-  visited loci; the servo makes the converged twist a canonical
-  function of the polygon (path-independence verified to 5e-9).
+   visited loci; the servo makes the converged twist a canonical
+   function of the polygon (path-independence verified to 5e-9).
+   SERVO_TWIST (2026-09-14, user request): `export const SERVO_TWIST` is
+   the single true/false switch for the idle twist servo (gates update()
+   step 6 only; the one-time twist canonicalization at initialization
+   still runs with it off, the twist then just drifts with the solver
+   data). orient.mjs skips its servo-dependent path-independence test
+   [E] when the flag is false (the test is meaningless without the
+   servo); all other tests hold under either setting.
 - `assets/js/hyperpolygon/chambers.js` — stability-chamber geometry for
   the 4 parabolic weights, dependency-free ES module shared by the
   widget and the harness (walls.mjs imports it). The widget tracks ONE
@@ -380,21 +608,22 @@ plus a three.js viewer, embedded in `_projects/hyperpolygon_moduli_spaces.md`.
   +y, matching the polygon view's chord pin). THREE exterior 2-spheres
   attach at (r,theta,t) = (0,0,0), (0.5,0,0), (1,0,0) — the r slider's
   snap points with theta = 0 — externally tangent: center = attachment +
-  radius * outward normal. Which chamberShorts PAIR slot attaches where
+   radius * outward normal. Which chamberShorts PAIR slot attaches where
 is MEASURED at load by `probeExteriorMap` (3-6 widget-exact solves;
    edge-parallelism sine residuals; retry at theta = 1e-4 escapes the
-   documented theta=0 stall basin): the slot map is chamber-INDEPENDENT
-   and follows PERMUTE_23 (solver.js): [6, 5, 7] = south/equator/north
-   with the current PERMUTE_23 = true (historical permuted call pattern —
-   splits {0,2}|{1,3}, {0,1}|{2,3}, {0,3}|{1,2} respectively), and
-   [7, 5, 6]
-   = south/equator/north under PERMUTE_23 = false (unpermuted
-   representative — the r-leg pairs with leg 0 at r = 0 and leg 1 at
-   r = 1; splits {0,3}|{1,2}, {0,1}|{2,3}, {0,2}|{1,3}), each attachment
-   carrying THAT chamber's short side (measured over 8 betas / 6
-   chambers, worst residual 4.6e-6 unpermuted / 2.7e-6 permuted,
-   runner-up margin >= 1:3.3e4; the widget fills any
-   null probe entry from the spare slots so all three spheres exist).
+   documented theta=0 stall basin): by the solver's COHERENT ATTACHMENT
+   ASSIGNMENT (2026-09-14, solver.js starSig/cycleSig — see the solver.js
+   Files entry) the map is the split->point bijection FIXED ACROSS ALL
+   CHAMBERS, [7, 5, 6] = south/equator/north under the current
+   PERMUTE_23 = false (unpermuted representative: south carries the
+   chamber's short side of split {0,3}|{1,2}, equator of {0,1}|{2,3},
+   north of {0,2}|{1,3}), so crossing a pair wall transfers only the
+   crossed point's pair to its complement ([6,5,7] under the permuted
+   pattern), each attachment carrying THAT chamber's short side (measured
+   over 12 betas / all 8 interior chambers, worst residual 2e-16,
+   runner-up margin >= 1:3e15; the widget fills any
+   null probe entry from the analytic starSlots/cycleSlots rule so all
+   three spheres exist).
    NOTE (measured, matches walls.mjs [E]): under either PERMUTE_23
    setting the displayed polygon leg j IS user
    leg j — no PERM conversion anywhere (PERM = [0,1,3,2] is exported only
@@ -450,17 +679,84 @@ as documentation of the permuted pattern's canceling double swap).
   `refreshSide()` runs in the loop's pending block (same cadence as
   solveAndDraw) and on t hover/focus; the side view uses the RAW t (1
   allowed — the dot renders the t->infinity limit while the solve keeps
-  T_SOLVE_MAX); the "lim t->infty" button (spec item 5) lives in the
-  t-slider box and appears iff flowState.nearInfinity (exterior branch,
-  t >= T_NEAR_INF = 0.9) — click is a PLACEHOLDER (caption note),
-   behavior pending user spec. Battery: `sideview.mjs` [P] probe rule
-   (chamber-independent map following PERMUTE_23 — [6,5,7] at the current
-   setting, [7,5,6] when false —, strictly in-chamber tuples), [S] sizes
-   (pair + the new central formula incl. the dominant clamp), [F]
-   paraboloid constraint + t=0 continuity, [E] exterior-sphere
-   constraints (|dot-center| = rk exactly, endpoints attachment/antipode),
-   [N] NaN/degeneracy safety, [I] purity — 3448 checks, ~1.8 s; added to
-  run-validation.sh (copies sideview.js like the other modules).
+    T_SOLVE_MAX); the "lim t->infty" button (spec item 5) lives in the
+   t-slider box and appears iff flowState.nearInfinity (exterior branch,
+   t >= T_NEAR_INF = 0.9) — click is a PLACEHOLDER (caption note),
+    behavior pending user spec. Battery: `sideview.mjs` [P] probe rule
+    (the coherent CONSTANT [7,5,6] map measured in all 8 interior chambers
+    over 12 betas — [6,5,7] under the permuted pattern —, strictly
+    in-chamber tuples), [S] sizes
+    (pair + the new central formula incl. the dominant clamp), [F]
+    paraboloid constraint + t=0 continuity, [E] exterior-sphere
+    constraints (|dot-center| = rk exactly, endpoints attachment/antipode),
+    [N] NaN/degeneracy safety, [I] purity — 3448 checks, ~1.8 s; added to
+   run-validation.sh (copies sideview.js like the other modules).
+   GAMMA / LEVEL CIRCLES (2026-09-14, task 3 — the "future level-circle
+   slider" is this): `flowState` and the factory's `update()` take an
+   optional trailing `gamma` (default 0, non-finite treated as 0): the
+   U(1) phase e^{i·gamma} on y rotates the dot along the LEVEL CIRCLES —
+   on the exterior branch the side direction w is rotated about the
+   sphere axis n (w -> cos·w + sin·(n×w)), on the central branch the
+   guide meridian u (and v = n×u with it) about the apex normal; the
+   attachment/antipode and the paraboloid apex stay fixed automatically
+   (they lie ON the rotation axes), so t = 0 points are fixed, matching
+   the moduli picture. gamma = 0 is a bit-exact no-op (guarded, so all
+   pre-gamma battery assertions are unchanged). The drawn paraboloid is
+   a surface of revolution about its own axis, so its point set is
+   gamma-invariant — only the dot + guide arc rotate. Battery [G] added
+   (level-circle invariants: |dot-center| = rk, polar height and
+   paraboloid rho invariant under gamma, 2pi-periodicity, orthonormal
+   rotated frames, gamma=0 bit-exactness); sideview.mjs now 4367 checks.
+- `assets/js/hyperpolygon/widget.js` — display-layer additions
+  (2026-09-14, tasks 1/2/3, pending user visual check). NO solver changes
+  (the U(1) y-phase fixes the su(2) polygon exactly because
+  hyperpolygonVertices only uses y†y — verified in Node to 2.5e-16):
+  (1) EDGE LABELS + SHORT-PAIR LIST + YELLOW PARALLELISM: the four
+  displayed legs' v-sides are labeled with canvas-texture sprites
+  ("v₀" ... "v₃" — CORRECTED 2026-09-14 per the user: the labels name the
+  four leg VECTORS v0..v3, NOT the vertices; the original v0..v4
+  vertex naming was wrong; the odd bend points ("the w's") unlabeled;
+  in the 9-point solver array leg j runs pts[2j] -> pts[2j+2], label
+  placed at that midpoint pushed away
+  from the polygon centroid, sprite scale ∝ polygon scale, textures
+  redrawn on theme change). A top-right overlay list (`.hp-pair-list`,
+  pointer-events none) shows the chamber's three short pairs, one row
+  per exterior sphere: "r=0: v₀ ∥ v₃" (attachment tag from
+  attachmentRs; pair = chamberShorts[extMap[k]], rebuilt at load and
+  after every Cross Wall). Per solve, the widget computes the sine of
+  the angle between every pair of v-side directions (threshold 1e-3 =
+  sideview's PARALLEL_TOL; zero-length edges read Infinity): ENTERING
+  parallelism fires ONE yellow blink (a sin(π·phase) pulse over 0.9 s,
+  played per-frame by updateEdgeColors on the segment color buffer), and
+  WHILE a pair is parallel both its v-side segments hold solid yellow
+  (palette edgeYellow; only the v-sides color, never the w-sides) and
+  the matching list row gets hp-straight. At the snaps exactly the
+  extMap pair is parallel (Node-verified: straight sine <= 1e-5 — the
+  r=1 documented 1-reff artifact stays far under threshold — runner-up
+  >= 0.2, generic points min sine 0.59), so the list indexes the
+   spheres. crossWall now re-runs fillExtMap() (probe + analytic + spare
+   fill, factored from load) because the crossed chamber's short pairs
+   change (the attachment POINTS do not — the map is the constant [7,5,6]
+   per the coherent assignment), then rebuilds the list. (2) SL(2,C) VIEW (task 2):
+  a collapsed `<details>` ("show SL(2,ℂ) polygons") between the side
+  view and the controls row holding two 300px canvases ("Re μₛₗ" /
+  "Im μₛₗ"), each with own renderer/camera/OrbitControls, rendered ONLY
+  while open (piggybacks the widget's rAF loop). Data: the last solve's
+  res.sl2 (5 points: 4 leg edges + the closing v4->v0 segment; mu_C = 0
+  makes v4 the origin, so the quadrilateral closes). Edges colored by
+  leg (edgeA/edgeB alternating, closing segment gray), 5 vertex markers,
+  fixed axes hint. At t = 0 in interior chambers y = 0 so BOTH views
+  degenerate to the origin — correct (the SL part vanishes on the
+  central sphere), not a bug. (3) GAMMA SLIDER (task 3): under t, same
+  normalized shape as theta (s ∈ [-1,1] step 0.005, γ = s·π, snap to 0
+  tol 0.03, readout "-π"/"π"/radians). `makeSlider` gained a noSolve
+  flag (gamma must NEVER trigger a solver run — rescue paths cost
+  30-115 ms; gamma input instead calls updateSlViews() + refreshSide()
+  directly). updateSlViews rotates the sl2 base data coordinatewise
+  (real' = cos·real − sin·imag, imag' = sin·real + cos·imag — exact
+  e^{iγ} action, gamma = 0 bit-exact via cos(0)=1/sin(0)=0; Node-verified
+  against sl2Vertices on the phased y to 1.6e-16). The su(2) polygon,
+  markers and caption are untouched by gamma.
 - `mathematica/` — reference notebooks and legacy data. Excluded from
   the Jekyll build; `mathematica/hyperpolygonData*` is gitignored
   (137 MB file, over GitHub's limit). `generateHyperpolygonData.wls`
@@ -516,7 +812,32 @@ as documentation of the permuted pattern's canceling double swap).
     ~9.5k solves, ~13 s): chord pinning, drag continuity vs a
     Kabsch-optimal shape baseline + exact-pinning reference, one-step
     jump smoothness, static stability, servo path-independence,
-    quaternion sanity. Exits 1 on failure.
+    quaternion sanity. Exits 1 on failure. Test [E] is skipped (reported
+    pass with a note) when orientation.js's SERVO_TWIST is false — the
+    converged twist is path-dependent by design without the servo.
+  - `star.mjs` — star-reindexing battery (1391 checks, exit 1 on failure):
+    [A] (r,theta,t) grid over the 4 star chambers, residuals vs the USER
+    beta + closure (su2/muU1/closure < 1e-9, muC < 1e-6), [B] straight-pair
+    parallelism at (0,0)/(1/2,0)/(1,0) — correct pair {sig[0],j}/{sig[2],j}/
+    {sig[1],j} parallel (1e-8; 1e-4 at r=1 for the documented reff offset),
+    the other two j-pairs not (1e-3), [C] bitwise equivalence with the
+    manual permuted call (beta o starSig(j) + hand unpermute), [D] starIndex
+    classification + coherent starSlots == [7,5,6] (incl. -1 on the four
+    cycle tuples), [E] cycle tuples
+    at full [A] bars (raised 2026-09-14 when the cycle path landed).
+  - `cycle.mjs` — cycle-chamber battery (4558 checks, exit 1 on failure):
+    [A] grid over the 4 cycle chambers, [B] snap straightness {s0,s1}/
+    {s1,s2}/{s0,s2}, [C] bitwise equivalence vs hand-unpermuted
+    solveCore(...,CYCLE_ANSATZ), [C2] closed-form y cross-check, [D]
+    cycleIndex/cycleSlots classification + coherent [7,5,6] (incl. the 4
+    exterior tuples), [D2] cross-wall coherence (24 crossings: crossed
+    slot's pair -> complement, others unchanged, family flip, constant map,
+    crossed chamber's south straight pair == its new T3 short side, sphere
+    deficits positive on both sides), [E] (1/2,0) locus disk + band,
+    [F] seeded fuzz, [S] scaled betas, [G] star<->cycle wall-crossing glue
+    measurement (both sides clean asserted; jump sizes INFO; see the
+    solver.js CYCLE REINDEXING entry), plus widget-load-path smoke
+    (probeExteriorMap == cycleSlots for all 4 cycle tuples).
   - `validate.mjs` — spot-checks vs `mathematica/hyperpolygonDataPolar`
     (only works where that 137 MB file exists)
 
@@ -658,10 +979,226 @@ Tracked work items from the user's planning call; keep statuses updated.
     user-verified 2026-09-13 ("It looks perfect!", then "Looks great").
     Future
     level-circle slider and lim t→∞ behavior owed; see the sideview.js
-    Files entry for all measured/canonical choices.
+    Files entry for all measured/canonical choices. (The level-circle
+    slider LANDED 2026-09-14 as the gamma slider — task list #11; only
+    the lim t→∞ behavior is still owed.)
+6. TODO (added 2026-09-14, LOWER PRIORITY per the user): crease-
+   consistency traversal fix — the θ parameter "creases" the displayed
+   polygon along the chord (pinned to the vertical axis by
+   orientation.js), but whether the crease is VISIBLE depends on the leg
+   traversal order, i.e. on PERMUTE_23, and the right choice is
+   beta-dependent (the 2↔3 swap is a coin flip). PERMUTE_23 was set
+   false 2026-09-14 pending this fix. Two candidate designs from the
+   planning discussion (user likes (1)+(3); (5) "will take more
+   thought"): (1)+(3) crease-score selection with hysteresis — define
+   the crease as the dihedral angle between the two half-polygon planes
+   split by the chord (v1-v4 side vs v5-v7 side), compute it for each
+   candidate traversal ordering (any leg permutation is a pure
+   relabeling: permute the solve beta and undo it on the output, so
+   mu_U1 = user beta is preserved for ALL 24 orderings — traversal is a
+   free display choice, same class as the orientor's twist), display the
+   ordering maximizing crease salience, and LATCH the choice with
+   hysteresis (re-flip only when the other ordering's score exceeds the
+   current one by a margin ε, orientation.js-style) so slider sweeps
+   flip at most once smoothly instead of flickering at ties; (5) the
+   principled gauge-invariant version — compute a scalar "crease
+   measure" (dihedral defect / coplanarity of the leg data, which lives
+   in C^2 and is traversal-independent) directly from the gauge-
+   invariant leg vectors and derive the canonical traversal from it
+   (path-independent by construction, like the orientor's servo), so
+   the crease shows whenever the polygon genuinely folds, for EVERY
+   beta; (5) subsumes (1)+(3) but needs more design thought. Either
+   way the traversal choice must stay a DISPLAY layer (never touch the
+   solved (x, y) invariants), and the PERMUTE_23 flag becomes obsolete
+   once the canonical rule lands.
+7. DONE (2026-09-14, user-verified same day "Looks pretty good"):
+   star-chamber
+   internal reindexing (user request "use an internal reindexing in the
+   solver... Just address the star case for now"): makeHyperpolygon
+   dispatches interior star chambers through starReindexed so the notebook
+    ansatz's (r,theta) always parameterizes the chamber's distinguished
+    column; cycle chambers followed the same day (task #8, the user's
+    own ansatz — see the CYCLE REINDEXING paragraph in the solver.js
+    Files entry). Requirements from the user's planning message (all
+    met by the landed ansatz): (0,0), (1/2,0), (1,0) are the three
+    short-pair-straight points, distinguished column fixed in span(0,1),
+    one other in span(1,0), cross-ratio parameterization of the remaining
+    two, distinguished column never parallel to the others. See the
+    solver.js Files entry (starIndex / starSlots / starReindexed /
+    solveCore) and the star.mjs battery.
+8. DONE (2026-09-14, same day as the user's ansatz message "We need to
+   address cycle chambers... x = {{1,1,1,0},{0, r e^{I theta}, 1-r, 1}}"):
+   cycle-chamber parameterization by internal reindexing (the 4 interior
+   chambers whose three short size-2 subsets do NOT share a common index;
+   they previously ran the un-reindexed historical path and stalled at
+   some (r,theta)). Landed exactly as the user proposed: distinguished leg
+   j permuted into slot 3, others ascending, x = [[1,1,1,0],
+   [0, r e^{i theta}, 1-r, 1]]; the y-solve's t/(1-t) prescription MOVED
+   from y42 to y22 (mu_C leg 3 forces y42 = 0 for this x — derived and
+   documented in the solver.js CYCLE REINDEXING Files entry); solveCore
+   gained an ansatz argument (default STAR keeps every historical path
+   bit-exact); endpoint/locus retries applied verbatim (no new gated
+   retries needed); cycleSlots gives the side view's attachment map and
+   widget.js's null-fill consults it. GLUE answer (user's question "not
+   sure how to make this glue well when crossing chambers"): the flop jump
+   at fixed sliders is INTRINSIC — every star<->cycle wall pair contains
+   the cycle side's distinguished leg, which is never straight in the
+   cycle chart, and at the on-wall tuple the two charts select different
+   branches of the solution variety (measured constant in eps): ~3e-3 of
+   polygon scale on the 4 walls where the wall pair is the star side's
+   south snap, 0.25-0.58 on the other 8; BOTH sides solve clean near
+   every wall (cycle.mjs [G]). Accepted known issue; mitigation would be
+    a UX decision. Full suite green: sweep unchanged, walls/sideview/
+   edge/locus/exterior/orient PASS, star.mjs 1386 (with [E] raised to
+   full bars), new cycle.mjs 4234 checks PASS, validate.mjs legacy diffs
+   unchanged (max 3.84e-4 documented spot).
+9. DONE (2026-09-14, user-approved: "Most of that looks good"): task 1 of the
+   five-task call — side labels ("v₀" .. "v₃" naming the leg VECTORS
+   after the user's same-day correction; the original v0..v4
+   vertex naming was wrong; w's unlabeled), top-right short-pair list (one row
+   per exterior sphere, chamber-dependent via extMap, rebuilt after
+   Cross Wall), one yellow blink when a pair of v-sides ENTERS
+   parallelism, solid yellow on the straight pair, list row highlighted.
+   See the widget.js Files entry. Solver untouched.
+10. DONE (2026-09-14, user-approved: "Most of that looks good"): task 2 — the SL(2,C)
+   view: collapsed `<details>` "show SL(2,ℂ) polygons" with Re/Im canvases
+   (leg-colored edges, closing segment gray, own OrbitControls, rendered
+   only while open). At t = 0 (interior chambers) both degenerate to the
+   origin — correct (mu_SL = 0 on the central sphere).
+11. DONE (2026-09-14, user-approved: "Most of that looks good"): task 3 — the gamma
+   slider under t (γ = s·π, [-π, π], snap to 0, noSolve so it never
+   triggers solver rescues): rotates the SL(2,C) polygons coordinatewise
+   (e^{iγ}) and the side-view dot along the level circles (sideview.js
+   gamma param). t = 0 fixed everywhere; su(2) polygon untouched
+   (verified 2.5e-16). This LANDS the side view's "future level-circle
+   slider" (task list #5 remainder); the lim t→∞ button behavior is the
+   only side-view item still owed.
+12. DONE (2026-09-14): task 4 — SERVO_TWIST constant in orientation.js
+   (true/false gate on the idle twist servo); orient.mjs [E] skips when
+   false. Shipped value true.
+13. TODO (2026-09-14, task 5 of the call; user asked to record the plan
+    for future agents — no code yet): inter-chamber jumpiness. Three
+    distinct jump sources, only some fixable; work them in this order:
+    (1) MEASURE FIRST — add a "jump meter": per slider event, Kabsch-
+    align and measure the displayed polygon's motion, log jumps above a
+    threshold with (wall crossed, sliders, beta); extend the cycle.mjs
+    [G] measurement to ALL wall classes (leg-dominant, pair, star<->cycle)
+    so fixes are judged against a table, not anecdotes. (2) SPHERE-MAP
+    SWAPS (fixable now) — crossing a wall can change which short pair
+    hosts which exterior sphere; sphere SIZES go to zero exactly on pair
+    walls (D -> 0) so the swap is continuous through zero, the artifact
+    is the abrupt re-assignment: fillExtMap() already re-probes on Cross
+    Wall (2026-09-14); next step is tweening sphere size/placement over
+    ~200 ms so even a legitimate swap animates instead of snapping.
+    (3) POLYGON SHAPE JUMP at star<->cycle walls is INTRINSIC (cycle.mjs
+    [G]: the two charts select different branches of the on-wall
+    solution variety, jump constant in eps; 0.25-0.58 of scale on 8 of
+    12 walls, ~3e-3 on the 4 south-snap walls). Two candidate fixes:
+    (a) ANIMATE THE FLOP (recommended now, display-only): drags can
+    never cross walls (chamber lock), so the jump only happens on the
+    deliberate Cross Wall click — play a ~0.5 s Kabsch-aligned blend
+    between the two on-wall branch representatives (both exact
+    solutions at the wall tuple; a straight-line morph of the 9
+    vertices). (b) CONTINUATION SOLVING (the principled fix, later,
+    battery-gated): the balancing equations are chamber-INDEPENDENT —
+    only the x0 ansatz is chamber-tied; add a solveFrom(prevPair, beta)
+    entry point that re-runs the (C*)^4 closed form + SL(2,C) Newton
+    from the PREVIOUS solved pair instead of rebuilding x0 from the new
+    chart, so beta deforms continuously through the wall and the
+    displayed pair follows continuously by construction; needs batteries
+    proving the continuation basin holds along real drag paths, with
+    the chart solve as fallback when it stalls. (4) HONESTY CUE — while
+    on a wall (breakingSubsets nonempty) the caption could note "on-
+    wall: branch choice changes on crossing" so the flop's snap reads
+    as intended. Recommendation: (2) + (3a) now, (3b) later.
+14. DONE (2026-09-14, same day; pending user visual check): coherent
+    attachment assignment (the user's request above): the split->point map
+    is the constant [7,5,6] in every chamber via the exported starSig /
+    cycleSig partner-table helpers; cycle.mjs [D2] regression battery.
+    Bonus: the item-13 item-(3) "intrinsic" polygon jump measured out to
+    be an artifact of the incoherent charts — all 12 star<->cycle walls
+    now glue to ~2.5e-3 of polygon scale off-wall (was 0.25-0.58 on 8 of
+    12). Item (3a) flop-animation and (3b) continuation solving are likely
+    moot for the shape; the y-side (SL(2,C) view) still differs between
+    charts on a flop (per-leg |y_i|^2 deltas up to 1.0).
 
 ## Status / next milestone
 
+- DONE (2026-09-14, user-approved same day: "Most of that looks good.
+  Write our suggestions down for future agents. We're done for now"):
+  the five-task call's
+  display batch (task list #9-12): (1) side labels + top-right
+  short-pair list + yellow parallelism (blink on entering parallelism,
+  solid while straight — at the snaps exactly the extMap pair, Node-
+  verified; crossWall re-probes the attachment map); (2) SL(2,C) Re/Im
+  polygon views in a collapsed `<details>`; (3) gamma slider (U(1)
+  y-phase): rotates the SL(2,C) polygons coordinatewise and the side-
+  view dot along the level circles, t = 0 fixed everywhere, su(2)
+  polygon bit-untouched (this closes the side view's level-circle
+  item); (4) SERVO_TWIST constant in orientation.js (orient.mjs [E]
+  skips when false). NO solver changes — sweep/walls/star/cycle/locus/
+  exterior/edge/validate all unchanged (validate max 3.84e-4 documented
+  spot); sideview PASS 4331 checks (new [G] gamma battery); orient
+  6/6. Inter-chamber jumpiness (task 5) remains TODO; the full plan is
+  recorded in task list #13 for future agents.
+- DONE (2026-09-14, user-verified same day "Looks pretty good"):
+  star-chamber
+  internal reindexing (task list #7): the solver now handles ALL FOUR star
+  chambers with the notebook ansatz via an internal leg permutation
+  (distinguished index j -> slot 3), unpermuted output, mu_U1 = user beta.
+  j = 3 path bit-identical to before (validate.mjs legacy diffs unchanged,
+  max 3.84e-4 at the documented spot). Side view attachment map now
+  chamber-dependent per starSlots; widget null-fill uses it. Full suite
+  green: sweep unchanged, walls/sideview/edge/locus/exterior/orient PASS,
+  new star.mjs 1322 checks PASS.
+- DONE (2026-09-14, same day as the user's ansatz message; pending user
+  visual check): cycle-chamber parameterization (task list #8, the user's
+  own ansatz): all 4 interior cycle chambers now solve via internal
+  reindexing with x = [[1,1,1,0],[0, r e^{i theta}, 1-r, 1]] and the y
+  prescription moved to y22 (see the CYCLE REINDEXING paragraph in the
+  solver.js Files entry). No stalls left: full (r,theta,t) grids, snap
+  points, (1/2,0) locus, seeded fuzz, scaled betas all clean (cycle.mjs
+  4234 checks); star paths bit-exact (validate.mjs diffs unchanged, max
+  3.84e-4 documented spot). Side view attachment map chamber-dependent per
+  cycleSlots; widget null-fill consults starSlots then cycleSlots. GLUE
+  measured (cycle.mjs [G]): both sides of every star<->cycle wall solve
+   clean; the fixed-slider flop jump is intrinsic (constant in eps):
+   ~3e-3 of polygon scale on the 4 south-pair walls, 0.25-0.58 on the
+   other 8 — accepted known issue, mitigation is a UX decision.
+   (SUPERSEDED 2026-09-14 by the coherent attachment assignment, task
+   list #14: the 0.25-0.58 jumps are GONE — all 12 walls now ~2.5e-3.)
+- DONE (2026-09-14, same day, pending user visual check): coherent
+  attachment assignment across chambers (user request: "crossing a chamber
+  can replace one short pair with its complement, and the associated
+  intersection point should transfer to the complement while the other two
+  pairs stay with their intersection points... intentionally pick the first
+  three columns of x in the solver ansatz to make this all coherent.
+  Previous agents have claimed this isn't possible but I'm rather certain
+  it is" — the user was RIGHT; see the COHERENT ATTACHMENT ASSIGNMENT
+  paragraph in the solver.js Files entry). The split->attachment-point map
+  is now the CONSTANT [7,5,6] in every chamber (south {0,3}|{1,2},
+  equator {0,1}|{2,3}, north {0,2}|{1,3}), implemented by the exported
+  partner-table helpers starSig(j)/cycleSig(j) consumed by
+  starReindexed/cycleReindexed/starSlots/cycleSlots; star-3 (the widget
+  default chamber) and cycle-0 keep their exact previous sigs, so those
+  paths are bit-identical (validate.mjs legacy diffs unchanged, max
+  3.84e-4 documented spot). Major side benefit measured: the star<->cycle
+  wall-crossing glue (task #13 item 3's "intrinsic" polygon shape jump) was
+  an artifact of the incoherent charts — the fixed-slider off-wall shape
+  jump dropped from 0.25-0.58 of polygon scale to ~2.5e-3-2.9e-3 on ALL 12
+  star<->cycle walls. Exterior chambers covered analytically via
+  cycleSlots (their pair short sides are the cycle chamber's). Full suite
+  green: sweep unchanged, walls/sideview/edge/exterior/orient PASS
+  (sideview 4367 checks, [P] now measures all 8 interior chambers with
+  residual 2e-16), star.mjs 1391 / cycle.mjs 4558 (new [D2] cross-wall
+  transfer battery) / locus.mjs 255 ([C] now excludes the closure-vertex
+  noise from the D2 check — measured, see the locus.mjs Files entry).
+- NEXT: milestone 3b remainder = optional SL(2,C) real/imaginary polygon
+  views, short math explanation on the project page, purgecss/build
+  polish. The moduli-space side view (Task list #5) is IN PROGRESS (first
+  increment implemented AND user-verified 2026-09-13 "It looks perfect!",
+  plus two user-verified feedback rounds the same day; remaining
+  side-view work: the level-circle slider and the lim t→∞ behavior).
 - DONE (2026-09-13): interior degenerate-locus fix (user bug report
   "errors at (r,theta)=(0.5,0), e.g. beta=(0.5,0.5,0.8,0.25), jump to
   something incorrect, many other chambers too"): the su(2) balancing
