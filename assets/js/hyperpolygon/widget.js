@@ -1,12 +1,13 @@
 // Hyperpolygon widget: live three.js view of the su(2) polygon computed by ./solver.js.
 // Loaded as an ES module after the vendored three.min.js and OrbitControls.js (global THREE).
 
-import { makeHyperpolygon, PERMUTE_23, starSlots, cycleSlots } from "./solver.js";
+import { makeHyperpolygon, stratumPair, PERMUTE_23, starSlots, cycleSlots } from "./solver.js";
 import { makeOrientor } from "./orientation.js";
 import { shortSubsets, chamberInterval, applyBetaDrag, breakingSubsets } from "./chambers.js";
-import { makeSideView, probeExteriorMap, attachmentRs } from "./sideview.js";
+import { makeSideView, probeExteriorMap, attachmentRs, PERM } from "./sideview.js";
 
 const T_SOLVE_MAX = 0.99;
+const T1_SOLVE_MAX = 0.99;
 
 const PALETTES = {
   light: {
@@ -17,10 +18,14 @@ const PALETTES = {
     markers: 0x808080,
     border: "#d0d0d0",
     caption: "#666666",
-    // side view: the unhighlighted exterior spheres carry a soft blue-gray
-    // tint so they read as glass bubbles on the white page; the active one
-    // lerps to pure white per the spec
+    // side view (task 3, light-mode adaptation): pure white spheres are
+    // invisible on the white page, so the central sphere and the ACTIVE
+    // (highlighted) exterior sphere / stratum carry a blue-gray tint in
+    // light mode; dark mode keeps the original white-on-dark look.
+    sphere: 0xcdd7e2,
+    sphereGrey: 0x93a5b8,
     ext: 0xb9c6d4,
+    extHi: 0x8fa3ba,
     parab: 0x4a7fd6,
     arc: 0x9aa4b2,
     sideBg: null,
@@ -33,7 +38,10 @@ const PALETTES = {
     markers: 0x9aa4b2,
     border: "#3a414b",
     caption: "#a0a0a0",
+    sphere: 0xffffff,
+    sphereGrey: 0xb0b0b0,
     ext: 0x9fb0c2,
+    extHi: 0xffffff,
     parab: 0x5a92e0,
     arc: 0x707c8a,
     sideBg: null,
@@ -126,6 +134,17 @@ function ensureSliderStyles() {
     "#hyperpolygon-widget .hp-btn:disabled {",
     "  opacity: 0.45;",
     "  cursor: default;",
+    "}",
+    "#hyperpolygon-widget .hp-slider:disabled {",
+    "  opacity: 0.4;",
+    "}",
+    // chamber panel (task 2): the beta weights, scale buttons and chamber
+    // inequalities live in one bordered box
+    "#hyperpolygon-widget .hp-panel {",
+    "  border: 1px solid var(--hp-box-bd);",
+    "  border-radius: 8px;",
+    "  padding: 8px 10px 7px;",
+    "  margin-top: 10px;",
     "}",
     // \vec{β} for the scale buttons: the combining-arrow codepoint
     // (U+03B2 + U+20D7) renders badly in most UI fonts, so the arrow is
@@ -484,6 +503,12 @@ function activate(container) {
     }
   }
 
+  // Chamber panel (task 2): the parabolic weights, their scale buttons and
+  // the chamber inequalities grouped in one bordered box.
+  const panel = document.createElement("div");
+  panel.className = "hp-panel";
+  container.appendChild(panel);
+
   const controlsRow = document.createElement("div");
   controlsRow.style.display = "flex";
   controlsRow.style.flexWrap = "wrap";
@@ -717,7 +742,18 @@ function activate(container) {
     const betaSolve = PERMUTE_23 ? [beta[0], beta[1], beta[3], beta[2]] : beta;
     let res = null;
     try {
-      res = makeHyperpolygon(r, theta, t, betaSolve, PERMUTE_23);
+      if (stratum) {
+        // I-stratum solve: the doubly-straight closed form at (t1, beta).
+        // The pair I is mapped through the same PERMUTE_23 pre-swap as the
+        // pipeline path (solve indexing), and stratumPair's permute
+        // argument applies the matching output swap so the displayed leg
+        // j is user leg j under either flag setting.
+        const t1c = Math.min(Math.max(parseFloat(t1Input.value), 0), T1_SOLVE_MAX);
+        const ISolve = PERMUTE_23 ? stratum.I.map((u) => PERM[u]) : stratum.I;
+        res = stratumPair(t1c, betaSolve, ISolve, PERMUTE_23);
+      } else {
+        res = makeHyperpolygon(r, theta, t, betaSolve, PERMUTE_23);
+      }
     } catch (err) {
       res = null;
     }
@@ -835,6 +871,15 @@ function activate(container) {
       res.accuracy.su2Norm.toExponential(1) +
       " · closure " +
       closure.toExponential(1);
+    if (stratum) {
+      text +=
+        " · I-stratum {" +
+        stratum.I.join(",") +
+        "} ∥ {" +
+        stratum.comp.join(",") +
+        "} · t\u2081 = " +
+        parseFloat(t1Input.value).toFixed(2);
+    }
     if (
       !Number.isFinite(closure) ||
       res.accuracy.su2Norm > 1e-6 ||
@@ -912,6 +957,25 @@ function activate(container) {
   const tInput = makeSlider("t", 0, 1, 0.01, 0, (v) =>
     v >= 1 ? "t→∞" : (v / (1 - v)).toFixed(2)
   );
+  // I-stratum mode (the "lim t→∞" click): while active, the r/θ/t sliders
+  // are parked and disabled at the attachment point, the solve comes from
+  // stratumPair (the doubly-straight closed form), and this t1 slider
+  // drives the stratum family: t1 = 0 is the tip slice (two nonzero y
+  // rows), growing t1 lifts the remaining rows (M = M0 (1 + t1/(1-t1))).
+  let stratum = null; // { k, S, I, comp } while active
+  let tBeforeStratum = 0.9;
+  const t1Input = makeSlider(
+    "t\u2081",
+    0,
+    1,
+    0.005,
+    0,
+    (v) => (v >= 1 ? "t\u2081\u2192\u221e" : (v / (1 - v)).toFixed(2)),
+    [{ value: 0, tol: 0.01 }]
+  );
+  t1Input.title =
+    "stratum parameter: t\u2081 = 0 is the tip slice (only the short pair's y rows nonzero); growing t\u2081 lifts the remaining rows";
+  t1Input.parentNode.style.display = "none";
   // gamma (task 3): the U(1) phase e^{i·gamma} acting on y. Moment-map
   // preserving; fixes the su(2) polygon (|y|^2 and y†y are phase-
   // invariant), rotates the SL(2,C) polygons coordinatewise, and in the
@@ -936,18 +1000,68 @@ function activate(container) {
     refreshSide();
   });
 
-  // "lim t→∞" (spec item 5): appears while the dot is on an exterior
-  // sphere near the t -> infinity end (flowState.nearInfinity, t >= 0.9).
-  // The click behavior is deliberately unspecified for now — the user
-  // will spell it out when we get to that stage.
+  // "lim t→∞" (spec item 5, now implemented): while the dot is on an
+  // exterior sphere near the t -> infinity end (flowState.nearInfinity,
+  // t >= 0.9) the button enters the I-stratum of that sphere's short pair:
+  // the r/θ/t sliders park at the attachment, a t1 slider appears, the
+  // solve switches to stratumPair, and the side view draws the stratum
+  // paraboloid at the sphere's tip (highlight-white). Clicking again
+  // leaves (t restores to its pre-entry value).
   const limBtn = document.createElement("button");
   limBtn.type = "button";
   limBtn.className = "hp-btn";
   limBtn.textContent = "lim t\u2192\u221e";
   limBtn.style.display = "none";
-  limBtn.title = "lim t\u2192\u221e \u2014 behavior to be specified";
+  limBtn.title = "enter the I-stratum (the tip of this exterior sphere)";
+  function attachmentIndexOfDot() {
+    const r = parseFloat(rInput.value);
+    const theta = parseFloat(thetaInput.value) * Math.PI;
+    for (let k = 0; k < 3; k++) {
+      if (extMap[k] === null || extMap[k] === undefined) continue;
+      if (Math.abs(r - attachmentRs[k]) > 1e-9) continue;
+      if (k === 1 && Math.abs(theta) > 1e-9) continue;
+      return k;
+    }
+    return -1;
+  }
+  function enterStratum() {
+    const k = attachmentIndexOfDot();
+    if (k < 0) return;
+    const S = extMap[k];
+    const I = chamberShorts[S];
+    if (!I || I.length !== 2) return;
+    const comp = [0, 1, 2, 3].filter((n) => I.indexOf(n) === -1);
+    tBeforeStratum = parseFloat(tInput.value);
+    stratum = { k: k, S: S, I: I, comp: comp };
+    rInput.disabled = true;
+    thetaInput.disabled = true;
+    tInput.disabled = true;
+    tInput.value = "1";
+    tInput.dispatchEvent(new Event("input"));
+    t1Input.parentNode.style.display = "";
+    limBtn.textContent = "leave stratum";
+    limBtn.title = "leave the stratum (return to the exterior sphere)";
+    scheduleSolve();
+    refreshSide();
+  }
+  function leaveStratum() {
+    stratum = null;
+    rInput.disabled = false;
+    thetaInput.disabled = false;
+    tInput.disabled = false;
+    t1Input.value = "0";
+    t1Input.dispatchEvent(new Event("input"));
+    t1Input.parentNode.style.display = "none";
+    tInput.value = String(Math.min(Math.max(tBeforeStratum, 0), 1));
+    tInput.dispatchEvent(new Event("input"));
+    limBtn.textContent = "lim t\u2192\u221e";
+    limBtn.title = "enter the I-stratum (the tip of this exterior sphere)";
+    scheduleSolve();
+    refreshSide();
+  }
   limBtn.addEventListener("click", () => {
-    caption.textContent = "lim t\u2192\u221e: behavior pending specification";
+    if (stratum) leaveStratum();
+    else enterStratum();
   });
   tInput.parentNode.appendChild(limBtn);
 
@@ -963,9 +1077,21 @@ function activate(container) {
     const theta = parseFloat(thetaInput.value) * Math.PI;
     const t = parseFloat(tInput.value);
     const gamma = parseFloat(gammaInput.value) * Math.PI;
-    const st = sideView.update(r, theta, t, beta, chamberShorts, extMap, tHover || t > 0, gamma);
-    // the dot is "near infinity" only on the exterior branch
-    limBtn.style.display = st && st.nearInfinity ? "" : "none";
+    const t1 = stratum ? parseFloat(t1Input.value) : 0;
+    const st = sideView.update(
+      r,
+      theta,
+      t,
+      beta,
+      chamberShorts,
+      extMap,
+      tHover || t > 0,
+      gamma,
+      stratum ? { k: stratum.k, t1: t1 } : null
+    );
+    // the button shows near the t -> infinity end of an exterior sphere,
+    // and STAYS while the stratum is active (it becomes "leave stratum")
+    limBtn.style.display = st && (st.nearInfinity || stratum) ? "" : "none";
   }
   function setTHover(on) {
     if (tHover === on) return;
@@ -983,11 +1109,11 @@ function activate(container) {
   // chamberShorts above)
   const betaHeader = document.createElement("div");
   betaHeader.style.flex = "1 1 100%";
-  betaHeader.style.marginTop = "4px";
+  betaHeader.style.marginTop = "2px";
   betaHeader.style.fontSize = "0.85em";
   betaHeader.textContent =
     "β — parabolic weights · red: past a chamber wall — dragging pins there; the chamber stays fixed · an amber box's Cross Wall button flips that inequality";
-  controlsRow.appendChild(betaHeader);
+  panel.appendChild(betaHeader);
 
   // dedicated beta-slider row: an explicit grid whose column count (4, 2
   // or 1) is picked from the measured width. A flex-wrap row with a
@@ -999,7 +1125,7 @@ function activate(container) {
   betaRow.style.display = "grid";
   betaRow.style.columnGap = "16px";
   betaRow.style.rowGap = "2px";
-  controlsRow.appendChild(betaRow);
+  panel.appendChild(betaRow);
   function pickBetaColumns() {
     const w = betaRow.clientWidth;
     const cols = w >= 700 ? 4 : w >= 340 ? 2 : 1;
@@ -1113,7 +1239,7 @@ function activate(container) {
   scaleUpBtn.append("Scale ", vecBeta(), " Up");
   scaleRow.appendChild(scaleDownBtn);
   scaleRow.appendChild(scaleUpBtn);
-  controlsRow.appendChild(scaleRow);
+  panel.appendChild(scaleRow);
 
   function syncScaleButtons() {
     let mx = 0;
@@ -1184,7 +1310,7 @@ function activate(container) {
     chamberRow.appendChild(el);
     chamberBoxes.push({ I: I, el: el, text: text, btn: crossBtn, term: betaTerm(I), termC: betaTerm(comp) });
   }
-  controlsRow.appendChild(chamberRow);
+  panel.appendChild(chamberRow);
 
   // refresh every box from chamberShorts (after a flop the slot's short
   // side is the complement, so label/terms must be rebuilt; the other
@@ -1293,6 +1419,9 @@ function activate(container) {
   // longer at equality after a successful nudge, so the box un-highlights;
   // dragging back to the wall re-highlights it and allows crossing back.
   function crossWall(k) {
+    // a wall crossing can invalidate the stratum (the flopped split's
+    // short side changes) — leave the stratum first
+    if (stratum) leaveStratum();
     const I = chamberShorts[k];
     const comp = [];
     for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) comp.push(n);

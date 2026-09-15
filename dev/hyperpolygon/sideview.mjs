@@ -38,6 +38,9 @@ import {
   PARAB_FOCAL,
   PHI_CAP,
   T_NEAR_INF,
+  STRATUM_FOCAL_REL,
+  T_PEEK_LO,
+  T_PEEK_HI,
   PERM,
   spherePoint,
   pairArea,
@@ -543,8 +546,91 @@ console.log("[N] NaN-safety, near-wall finiteness, endpoint grid");
 }
 
 // ---------------------------------------------------------------------------
-// [I] purity
-console.log("[I] purity (repeat calls bit-identical)");
+// [STR] I-stratum branch (flowState's stratum mode + the ghost frame)
+console.log("[STR] stratum branch (tip paraboloid frames, dot placement, gamma)");
+{
+  // local vector helpers (the battery stays dependency-free)
+  const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const scale3 = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+  const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross3 = (a, b) => [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+  const len3 = (a) => Math.sqrt(dot3(a, a));
+  const BETA = [0.55, 0.15, 0.15, 0.15];
+  const shorts = shortSubsets(BETA);
+  const probe = probeExteriorMap(BETA, shorts);
+  const extMap = probe.map;
+  for (let k = 0; k < 3; k++) {
+    const S = extMap[k];
+    if (S === null) continue;
+    const I = shorts[S];
+    const rk = pairRadius(BETA, I);
+    const R = centralRadius(BETA);
+    const p = spherePoint(attachmentRs[k], 0, R);
+    // exterior branch carries the ghost frame
+    const ext = flowState(attachmentRs[k], 0, 0.5, BETA, shorts, extMap);
+    ok(ext !== null && ext.kind === "exterior", `[STR] k=${k}: exterior branch missing`);
+    if (!ext) continue;
+    ok(ext.stratum !== null && ext.stratum !== undefined, `[STR] k=${k}: exterior branch carries no stratum frame`);
+    if (!ext.stratum) continue;
+    const fr = ext.stratum;
+    ok(Math.abs(fr.rk - rk) < 1e-15, `[STR] k=${k}: frame rk mismatch`);
+    // apex = attachment + 2 rk n, on the sphere (|apex - center| = rk)
+    const n = ext.exterior.normal;
+    const apexExpect = add3(p, scale3(n, 2 * rk));
+    ok(len3(sub3(fr.apex, apexExpect)) < 1e-12, `[STR] k=${k}: apex != attachment + 2 rk n`);
+    ok(Math.abs(len3(sub3(fr.apex, ext.exterior.center)) - rk) < 1e-12, `[STR] k=${k}: tip not on the exterior sphere`);
+    ok(Math.abs(fr.f - STRATUM_FOCAL_REL * rk) < 1e-15, `[STR] k=${k}: focal != STRATUM_FOCAL_REL * rk`);
+    ok(Math.abs(dot3(fr.u, fr.n)) < 1e-12 && Math.abs(len3(fr.u) - 1) < 1e-12, `[STR] k=${k}: meridian u not unit-tangent`);
+    ok(Math.abs(dot3(cross3(fr.u, fr.v), fr.n) - 1) < 1e-12, `[STR] k=${k}: (u, v, n) not right-handed orthonormal`);
+    // stratum branch: t1 = 0 dot at the apex; t1 > 0 on the paraboloid
+    for (const t1 of [0, 0.25, 0.6, 1]) {
+      const st = flowState(attachmentRs[k], 0, 1, BETA, shorts, extMap, 0, { k: k, t1: t1 });
+      ok(st !== null && st.kind === "stratum", `[STR] k=${k} t1=${t1}: branch not stratum`);
+      if (!st || st.kind !== "stratum") continue;
+      ok(st.nearInfinity === true && st.slot === S, `[STR] k=${k} t1=${t1}: flags wrong`);
+      ok(finite3(st.dot) && st.arc.every(finite3), `[STR] k=${k} t1=${t1}: non-finite output`);
+      ok(len3(sub3(st.stratum.apex, fr.apex)) === 0, `[STR] k=${k} t1=${t1}: frame apex differs from the ghost frame`);
+      // dot = apex + rho u + z n with z = rho^2 / (2 f)
+      const d = sub3(st.dot, fr.apex);
+      const rho = dot3(d, fr.u);
+      const z = dot3(d, fr.n);
+      ok(Math.abs(z - (rho * rho) / (2 * fr.f)) < 1e-12, `[STR] k=${k} t1=${t1}: dot not on the stratum paraboloid`);
+      if (t1 === 0) {
+        ok(len3(d) === 0, `[STR] k=${k} t1=0: dot not exactly at the apex`);
+      } else {
+        ok(rho > 0 && z > 0, `[STR] k=${k} t1=${t1}: dot did not climb outward`);
+      }
+      // gamma: t1 = 0 fixed; level-circle invariants for t1 > 0
+      for (const g of [0.7, -2.1]) {
+        const sg = flowState(attachmentRs[k], 0, 1, BETA, shorts, extMap, g, { k: k, t1: t1 });
+        ok(sg !== null && finite3(sg.dot), `[STR] k=${k} t1=${t1} gamma: non-finite`);
+        if (!sg) continue;
+        if (t1 === 0) {
+          ok(len3(sub3(sg.dot, fr.apex)) === 0, `[STR] k=${k} t1=0: gamma moved the apex dot`);
+        } else {
+          const dg = sub3(sg.dot, fr.apex);
+          ok(Math.abs(dot3(dg, fr.n) - z) < 1e-12, `[STR] k=${k} t1=${t1}: gamma changed the polar height`);
+          ok(Math.abs(Math.hypot(dot3(dg, fr.u), dot3(dg, fr.v)) - Math.abs(rho)) < 1e-12, `[STR] k=${k} t1=${t1}: gamma changed the level-circle radius`);
+        }
+        const back = flowState(attachmentRs[k], 0, 1, BETA, shorts, extMap, g + 2 * Math.PI, { k: k, t1: t1 });
+        ok(back !== null && len3(sub3(back.dot, sg.dot)) < 1e-12, `[STR] k=${k} t1=${t1}: gamma not 2pi-periodic`);
+      }
+    }
+  }
+  // central branch: no stratum frame; stratum arg ignored off-attachment
+  const cen = flowState(0.3, 0.8, 0.4, BETA, shorts, extMap, 0, { k: 0, t1: 0.5 });
+  ok(cen !== null && cen.kind === "central" && cen.stratum === null, "[STR] central branch must carry stratum = null");
+  // ghost opacity thresholds are widget/loop-side; the data side is T_PEEK_*
+  ok(T_PEEK_LO < T_PEEK_HI && T_PEEK_LO >= T_NEAR_INF, "[STR] ghost window inconsistent with T_NEAR_INF");
+  console.log("  stratum frames + gamma invariants OK over the three attachments");
+}
+
+
 {
   const beta = [0.5, 0.5, 0.5, 0.25];
   const shorts = shortSubsets(beta);

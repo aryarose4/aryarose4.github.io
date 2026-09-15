@@ -13,6 +13,7 @@ node sideview.mjs
 node edge.mjs
 node locus.mjs
 node exterior.mjs
+node stratum.mjs
 node star.mjs
 node cycle.mjs
 node orient.mjs

@@ -916,6 +916,148 @@ function exteriorPairAt(reff, theta, beta, j) {
   return [x, y];
 }
 
+// ===== I-stratum (doubly-straight pair split; the "lim t -> infinity" target) =====
+//
+// Entering the stratum of a pair split {I | comp} from the tip (antipode) of
+// the exterior sphere carrying the short pair I: the stratum consists of the
+// balanced pairs for which BOTH the two I-legs and the two comp-legs have
+// parallel x-columns, i.e. the displayed polygon is a closed walk on a single
+// line (every pair of v-sides within I and within comp is straight). The
+// t1 = 0 slice has exactly TWO nonzero rows of y (the comp side's rows
+// vanish), and growing t1 makes the remaining rows nonzero.
+//
+// Normal form (user leg indexing; the side CONTAINING LEG 0 sits on e1 — this
+// matches the pipeline approach shape measured at every attachment — the
+// other side on e2):
+//   e1Side legs: x_col = (m_i, 0),  y_row = (0, +-n_i)
+//   e2Side legs: x_col = (0, m_i),  y_row = (+-n_i, 0)
+// mu_C (per leg, row . col = 0) then holds by structure, and with M >=
+// max(sum_I beta, sum_comp beta) := M0 the magnitudes
+//   m_i^2 = (M + b_p - b_q)(M + b_p + b_q)/(2M)      (factored forms; the
+//   n_i^2 = (M - b_p - b_q)(M - b_p + b_q)/(2M)       direct expansions cancel
+//                                                     catastrophically near
+//                                                     the wall M = b_p + b_q)
+// for the side's legs (p, q) solve EVERYTHING identically:
+//   mu_U1: (m^2 - n^2)/2 = beta  (telescopes to 4 M beta / 4 M),
+//   mu_SU2: both sides carry |x|^2 + |y|^2 = 2M, so the trace-free part of
+//     sum (v_i - w_i) vanishes,
+//   mu_SL (x.y = 0): within each side the products have EQUAL magnitudes
+//     m_i^2 n_i^2 = (M^2-(b_p+b_q)^2)(M^2-(b_p-b_q)^2)/(4M^2), and the sign
+//     rule (+n on the side's lower-index leg, -n on the higher-index leg)
+//     makes them cancel pairwise.
+// The stratum family is M(t1) = M0 (1 + t1/(1-t1)): at t1 = 0 the comp side
+// has n_i = 0 exactly (its |x|^2 = 2 beta_i), so only the two I-side rows are
+// nonzero; t1 > 0 lifts all four rows. On the pair wall (M0 = sum_I beta)
+// every row vanishes and the branch degenerates to the y = 0 stick — the
+// same point the shrinking exterior sphere (radius -> 0) attaches at.
+//
+// CONTINUITY: the t -> 1^- pipeline approach shape at an attachment converges
+// to the t1 = 0 slice (measured to ~1e-5 relative in |C|^2, |alpha|^2 at
+// t = 0.99 for exterior chambers (all three attachments, asymmetric betas,
+// dominant legs 0 and 1) AND interior chambers; the axis convention above is
+// read off those shapes). The pipeline only FOLLOWS the stratum up to
+// T ~ 1e4..1e5 (all leg energies then equalize and the shape leaves the
+// stratum), which is why this branch is constructed in closed form instead of
+// reusing the pipeline (the widget's T_SOLVE_MAX = 0.99 stays inside the
+// approach window, so entering the stratum is display-continuous).
+
+// The balanced stratum pair at t1 for the short pair I (a 2-element array of
+// user leg indices; the complement is the long side). Returns the same shape
+// as makeHyperpolygon ({x, y, vertices, sl2, accuracy}) or null when I is not
+// a short pair or the input is degenerate. permute swaps quiver legs 2 and 3
+// of the returned pair (same semantics as makeHyperpolygon's permute
+// argument, for the PERMUTE_23 widget call pattern).
+export function stratumPair(t1, beta, I, permute = false) {
+  if (!Array.isArray(I) || I.length !== 2 || !Array.isArray(beta) || beta.length !== 4) {
+    return null;
+  }
+  if (!Number.isFinite(t1)) return null;
+  const comp = [0, 1, 2, 3].filter((i) => i !== I[0] && i !== I[1]);
+  const sumI = beta[I[0]] + beta[I[1]];
+  const sumC = beta[comp[0]] + beta[comp[1]];
+  if (!(sumC >= sumI - 1e-12)) return null; // I must be the short side
+  const t1c = Math.min(Math.max(t1, 0), 1 - 1e-9); // keep T1 finite
+  const T1 = t1c / (1 - t1c);
+  const M = sumC * (1 + T1);
+  // Per-side magnitudes for legs (p, q), sideSum = beta[p] + beta[q] (the same
+  // floating-point sum used for sumI / sumC, so A = M - sideSum is EXACTLY 0
+  // at t1 = 0 on the comp side and on the pair wall). The two y magnitudes
+  // share ONE product magnitude sqrt(G) — m_p n_p = m_q n_q = sqrt(G)
+  // algebraically, and evaluating both as sqrt(G)/m_i keeps the mu_SL
+  // cancellation at roundoff instead of leaving an O(n) mismatch when the
+  // direct n^2 forms round independently (at t1 = 0 the comp n^2 ~ 1e-17
+  // noise otherwise survives as a ~1e-9 mu_SL residual).
+  //   m_i^2 = (M + b_i - b_k)(M + b_i + b_k)/(2M)   (factored: no cancellation)
+  //   G     = (M - sideSum)(M + sideSum)(M - b_p + b_q)(M + b_p - b_q)/(4 M^2)
+  //         = m_i^2 n_i^2 for both legs; >= 0 for short I.
+  const sideMags = (p, q, sideSum) => {
+    const m2p = ((M + beta[p] - beta[q]) * (M + beta[p] + beta[q])) / (2 * M);
+    const m2q = ((M + beta[q] - beta[p]) * (M + beta[q] + beta[p])) / (2 * M);
+    const G =
+      ((M - sideSum) *
+        (M + sideSum) *
+        (M - beta[p] + beta[q]) *
+        (M + beta[p] - beta[q])) /
+      (4 * M * M);
+    const g = Math.sqrt(Math.max(G, 0));
+    return [Math.sqrt(m2p), g / Math.sqrt(m2p), Math.sqrt(m2q), g / Math.sqrt(m2q)];
+  };
+  // Assemble one side: legs (p, q) = the side's two legs in ascending order;
+  // onE1 = the side's columns sit on e1 (rows on e2) or the reverse.
+  const buildSide = (p, q, onE1) => {
+    const [mp, np, mq, nq] = sideMags(p, q, beta[p] + beta[q]);
+    if (onE1) {
+      // columns (m, 0), rows (0, +-n)
+      x[0][p] = C(mp);
+      x[0][q] = C(mq);
+      y[p][1] = C(np);
+      y[q][1] = C(-nq);
+    } else {
+      // columns (0, m), rows (+-n, 0)
+      x[1][p] = C(mp);
+      x[1][q] = C(mq);
+      y[p][0] = C(np);
+      y[q][0] = C(-nq);
+    }
+  };
+  const x = [
+    [C(0), C(0), C(0), C(0)],
+    [C(0), C(0), C(0), C(0)],
+  ];
+  const y = [
+    [C(0), C(0)],
+    [C(0), C(0)],
+    [C(0), C(0)],
+    [C(0), C(0)],
+  ];
+  const loI = Math.min(I[0], I[1]);
+  const hiI = Math.max(I[0], I[1]);
+  const loC = Math.min(comp[0], comp[1]);
+  const hiC = Math.max(comp[0], comp[1]);
+  // the side containing leg 0 sits on e1 (pipeline approach convention)
+  if (I.indexOf(0) >= 0) {
+    buildSide(loI, hiI, true);
+    buildSide(loC, hiC, false);
+  } else {
+    buildSide(loC, hiC, true);
+    buildSide(loI, hiI, false);
+  }
+  const [xf, yf] = permute ? swapLegs23(x, y) : [x, y];
+  const su2 = muSU2Coords(x, y);
+  return {
+    x: xf,
+    y: yf,
+    vertices: hyperpolygonVertices(xf, yf),
+    sl2: sl2Vertices(xf, yf),
+    accuracy: {
+      su2Norm: Math.hypot(su2[0], su2[1], su2[2]),
+      muU1Error: muU1Error(x, y, beta),
+      muCNorm: Math.max(...muC(x, y).map(cAbs2)) ** 0.5,
+      usedStable: false,
+    },
+  };
+}
+
 // ===== Interior-chamber classification (star reindexing) =====
 //
 // Interior chambers (no dominant leg) come in two flavors: the three short
