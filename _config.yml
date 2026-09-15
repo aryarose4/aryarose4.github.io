@@ -191,6 +191,7 @@ exclude:
   - dev/
   - CONTRIBUTING.md
   - CUSTOMIZE.md
+  - AGENTS.md
   - Dockerfile
   - docker-compose.yml
   - docker-compose-slim.yml
