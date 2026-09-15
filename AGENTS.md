@@ -456,9 +456,57 @@ blocks remain fragile); work around the cap when needed:
   == [7,5,6], the crossed chamber's displayed south straight pair == its
   new T3 short side, sphere deficits positive on both sides with the fixed
   side's imbalance flipping) and the [7,5,6] constancy assertions in
-  star.mjs [D] / cycle.mjs [D] (incl. the 4 exterior tuples); sideview.mjs
-  [P] widened to all 8 interior chambers (measured map [7,5,6] everywhere,
-  worst mapped residual 2e-16, runner-up margin >= 1:3e15).
+   star.mjs [D] / cycle.mjs [D] (incl. the 4 exterior tuples); sideview.mjs
+   [P] widened to all 8 interior chambers (measured map [7,5,6] everywhere,
+   worst mapped residual 2e-16, runner-up margin >= 1:3e15).
+  I-STRATUM (2026-09-14, user task "when clicked, we should 'enter the I
+  stratum'"; solver part): the stratum of a pair split {I | comp} = the
+  balanced pairs whose x-columns are parallel WITHIN BOTH I and comp (the
+  su(2) polygon is a closed walk on one line — a stick). Entered from the
+  tip (antipode) of the exterior sphere carrying the short pair I. New
+  export `stratumPair(t1, beta, I, permute = false)` (same return shape as
+  makeHyperpolygon; null when I is not short): closed form, NO pipeline.
+  Normal form: the side CONTAINING LEG 0 sits on e1 (cols (m,0), rows
+  (0,±n)), the other on e2 (cols (0,m), rows (±n,0)) — read off the
+  pipeline's t -> 1^- approach shapes at every attachment. With
+  M0 = sum_comp beta, T1 = t1/(1-t1), M = M0 (1 + T1), the per-side
+  magnitudes for the side's legs (p, q) are
+    |x|^2 = (M + b_p - b_q)(M + b_p + b_q)/(2M)   (factored: fp-safe),
+    m_i n_i = sqrt(G) SHARED: G = (M-sideSum)(M+sideSum)(M-b_p+b_q)
+    (M+b_p-b_q)/(4M^2) evaluated once per side, n_i = sqrt(G)/m_i — this
+    makes the mu_SL products cancel at roundoff and the comp-side rows
+    EXACTLY zero at t1 = 0 (A = M - sideSum is an exact fp zero there).
+  Identities: mu_U1 exact per leg; mu_SU2 exact (both sides carry
+  |x|^2+|y|^2 = 2M); mu_C structural; mu_SL via the shared-G cancellation
+  (the two products in a side have equal magnitudes and opposite signs —
+  lower-index leg +n, higher-index leg -n). The dominant leg plays NO role:
+  the stratum exists in EVERY chamber for every short pair. t1 = 0: the two
+  comp rows vanish exactly (two nonzero rows = the I side); t1 > 0 lifts
+  all four (M grows; |y|^2 monotone in t1). On the pair wall (M0 = sum_I)
+  all rows vanish -> the y = 0 stick, matching the radius-0 sphere.
+  CONTINUITY (battery [B]): the pipeline climb at an attachment converges
+  to the t1 = 0 slice — to ~1e-5 relative at t = 0.99 for r = 0 (all
+  chambers), the equator when the locus pair {2,3} is the I side, and
+  interior chambers generally; BUT the crossover (all leg energies
+  equalizing) arrives at T = t/(1-t) ~ 1e2..1e4 and the climb then DEPARTS
+  the slice: earliest/grossest at the equator when {2,3} is the comp side
+  (exterior chambers with dominant leg 2 or 3, and an interior cycle
+  chamber), and ~2e-3 rows by t = 0.99 at r = 1 (the reff offset) in ALL
+  chambers. Consequence: entering the stratum at t >= 0.9 is
+  display-continuous to ~1e-3 except in those classes, where a visible
+  jump at t >~ 0.95 is INTRINSIC (the pipeline's t -> infinity limit
+  genuinely leaves the stratum; the slice is still the stratum boundary).
+  PERMUTE_23 gating: stratumPair takes the solve-indexed (beta, I) plus
+  the permute argument (widget maps I through PERM); battery [D] asserts
+  mu_U1 = user beta + bit-identical x / |y|^2 (y SIGNS may differ — the
+  unshown relative SL phase — and vertices to 1 ulp via the closure sum
+  order). Battery: dev/hyperpolygon/stratum.mjs (1877 checks, in
+  run-validation.sh): [A] residual/straightness/row grid over 8 chambers x
+  3 pair slots x 6 t1 values, [B] approach comparison (bars encode the
+  measured crossover classes above), [C] per-side product cancellation +
+  row monotonicity, [D] permute pattern, [E] on-wall degeneracy, [F] perf
+  (< 5 ms; closed form costs ~0 ms).
+
 - `assets/js/hyperpolygon/orientation.js` — display-orientation servo,
   dependency-free ES module (read this before touching widget
   orientation). `makeOrientor()` returns `{ update(vertices, dt,
@@ -707,8 +755,34 @@ as documentation of the permuted pattern's canceling double swap).
    (level-circle invariants: |dot-center| = rk, polar height and
    paraboloid rho invariant under gamma, 2pi-periodicity, orthonormal
    rotated frames, gamma=0 bit-exactness); sideview.mjs now 4367 checks.
+  STRATUM BRANCH + LIGHT MODE (2026-09-14, user tasks 1/3, user-verified
+  2026-09-15: "Looks good"): flowState
+  gained a trailing `stratum` argument (null | {k, t1}): when non-null and
+  the (r, theta) sliders sit ON attachment k (the widget parks them there
+  in stratum mode), the STRATUM branch is returned (kind "stratum"): the
+  dot rides the shallow paraboloid kissing the sphere's tip
+  (apex = attachment + 2 rk n, axis n, focal = STRATUM_FOCAL_REL·rk = 0.35
+  rk, phi(t1) = atan(PHI_K_STRAT·t1/(1-t1)) capped PHI_CAP_STRAT = 55 deg;
+  meridian u = -w so the flow continues the climb's arrival direction).
+  The exterior branch ALSO carries the frame (field `stratum`) for the
+  ghost. Highlight semantics (the loop): the stratum mesh is INVISIBLE
+  until t >= T_PEEK_LO = 0.9, fades to the ghost (STRAT_GHOST_OPACITY
+  0.16) over [T_PEEK_LO, T_PEEK_HI = 0.97], and turns highlight-white
+  (opacity 0.92, ~80 ms lag) once the stratum branch is active; the
+  exterior sphere stays white and the central sphere stays grey in stratum
+  mode. LIGHT MODE (task 3): the sphere colors are palette-driven —
+  new palette keys `sphereGrey` (central sphere while climbing, default
+  0xb0b0b0) and `extHi` (highlighted exterior sphere / stratum, default
+  0xffffff); widget.js's light palette now sets sphere 0xcdd7e2,
+  sphereGrey 0x93a5b8, extHi 0x8fa3ba (dark mode keeps white), so nothing
+  renders invisible-on-white. Battery: sideview.mjs [STR] (frame
+  orthonormality, apex/2rk identity, dot-on-paraboloid + z = rho^2/2f,
+  t1=0 dot == apex exactly, gamma level-circle invariants + 2pi
+  periodicity, central branch carries stratum = null); sideview.mjs is now
+  4555 checks.
 - `assets/js/hyperpolygon/widget.js` — display-layer additions
-  (2026-09-14, tasks 1/2/3, pending user visual check). NO solver changes
+  (2026-09-14, tasks 1/2/3, user-approved same day: "Most of that looks
+  good"). NO solver changes
   (the U(1) y-phase fixes the su(2) polygon exactly because
   hyperpolygonVertices only uses y†y — verified in Node to 2.5e-16):
   (1) EDGE LABELS + SHORT-PAIR LIST + YELLOW PARALLELISM: the four
@@ -757,6 +831,26 @@ as documentation of the permuted pattern's canceling double swap).
   e^{iγ} action, gamma = 0 bit-exact via cos(0)=1/sin(0)=0; Node-verified
   against sl2Vertices on the phased y to 1.6e-16). The su(2) polygon,
   markers and caption are untouched by gamma.
+  STRATUM MODE + PANEL + LIGHT PALETTE (2026-09-14, user tasks 1/2/3,
+  user-verified 2026-09-15: "Looks good"): (1) the "lim t→∞" button is now LIVE
+  (task list #5's last item): clicking it on an exterior sphere with
+  t >= T_NEAR_INF enters the I-stratum of that sphere's short pair
+  (stratum state {k, S, I, comp}; attachment found by re-scanning the
+  parked sliders): the r/θ/t sliders are DISABLED and parked (t set to
+  exactly 1 = "t→∞"; the pre-entry t is restored on exit), the hidden
+  t1 slider appears (t₁ ∈ [0,1], readout t1/(1-t1), "t₁→∞" at 1, gentle
+  snap to 0), the solve switches to stratumPair(t1c <= T1_SOLVE_MAX =
+  0.99, betaSolve, ISolve, PERMUTE_23) with ISolve = I.map(PERM) under
+  the flag (dormant while PERMUTE_23 = false), the button becomes
+  "leave stratum" (click again = leave: t1 -> 0, t restored, sliders
+  re-enabled), Cross Wall leaves the stratum first, and the caption
+  gains " · I-stratum {a,b} ∥ {c,d} · t₁ = ...". The polygon in stratum
+  mode is the doubly-straight stick; the yellow-edge + pair-list logic
+  lights BOTH pairs automatically. (2) the beta controls (betaHeader,
+  betaRow, scaleRow, chamberRow) moved into a bordered `.hp-panel` box
+  ("the chamber stuff in a panel", task 2). (3) light-mode side-view
+  palette (task 3): PALETTES gained sphere/sphereGrey/extHi keys (see
+  the sideview.js entry).
 - `mathematica/` — reference notebooks and legacy data. Excluded from
   the Jekyll build; `mathematica/hyperpolygonData*` is gitignored
   (137 MB file, over GitHub's limit). `generateHyperpolygonData.wls`
@@ -838,6 +932,15 @@ as documentation of the permuted pattern's canceling double swap).
     measurement (both sides clean asserted; jump sizes INFO; see the
     solver.js CYCLE REINDEXING entry), plus widget-load-path smoke
     (probeExteriorMap == cycleSlots for all 4 cycle tuples).
+  - `stratum.mjs` — I-stratum battery (1877 checks, exit 1 on failure):
+    [A] residual/straightness/row-structure grid over 8 chambers x the 3
+    pair slots x 6 t1 values (su2/muU1/muC/closure/mu_SL < 1e-9, both
+    pairs' columns parallel < 1e-12, comp rows ~0 at t1 = 0, all four
+    rows nonzero at t1 = 0.5), [B] the t1 = 0 slice vs the pipeline
+    approach shape at the three attachments (bars encode the measured
+    crossover classes — see the solver.js I-STRATUM entry), [C] per-side
+    product cancellation + comp-row monotonicity in t1, [D] the
+    PERMUTE_23 call pattern, [E] on-wall degeneracy, [F] perf.
   - `validate.mjs` — spot-checks vs `mathematica/hyperpolygonDataPolar`
     (only works where that 137 MB file exists)
 
@@ -980,8 +1083,9 @@ Tracked work items from the user's planning call; keep statuses updated.
     Future
     level-circle slider and lim t→∞ behavior owed; see the sideview.js
     Files entry for all measured/canonical choices. (The level-circle
-    slider LANDED 2026-09-14 as the gamma slider — task list #11; only
-    the lim t→∞ behavior is still owed.)
+    slider LANDED 2026-09-14 as the gamma slider — task list #11; the
+    lim t→∞ behavior LANDED the same day as the I-stratum entry — task
+    list #15: the side view is COMPLETE.)
 6. TODO (added 2026-09-14, LOWER PRIORITY per the user): crease-
    consistency traversal fix — the θ parameter "creases" the displayed
    polygon along the chord (pinned to the vertical axis by
@@ -1122,8 +1226,36 @@ Tracked work items from the user's planning call; keep statuses updated.
     moot for the shape; the y-side (SL(2,C) view) still differs between
     charts on a flop (per-leg |y_i|^2 deltas up to 1.0).
 
+15. DONE (2026-09-14, same-day three-task batch, user-verified
+    2026-09-15: "Looks good"): (1) the lim t→∞ button enters the I-stratum (task list #5's
+    last item — the side view is now COMPLETE): solver `stratumPair`
+    (see the solver.js I-STRATUM entry), side-view tip paraboloid with
+    the invisible -> ghost -> white highlight ramp (see the sideview.js
+    STRATUM BRANCH entry), widget stratum mode with a t1 slider
+    (see the widget.js STRATUM MODE entry). The stratum exists for every
+    short pair in EVERY chamber (the dominant leg plays no role), and
+    the t1 = 0 slice is the pipeline's approach shape (display-continuous
+    entry at t ~ 0.9; the classes where the climb departs the slice
+    before t = 1 are measured and documented in stratum.mjs [B]).
+    (2) chamber UI panel (beta sliders + scale buttons + chamber
+    inequality boxes grouped in a bordered .hp-panel). (3) light-mode
+    side-view palette (white spheres -> palette-driven tints; see the
+    sideview.js LIGHT MODE note). Full suite green: sweep unchanged,
+    walls/sideview (4555 incl. new [STR])/edge/locus/exterior/orient/
+    star/cycle PASS, validate legacy diffs unchanged, new stratum.mjs
+    1877 checks PASS.
+
 ## Status / next milestone
 
+- DONE (2026-09-14, same-day three-task batch, user-verified
+  2026-09-15: "Looks good"): the I-stratum ("lim t→∞" now enters the stratum: solver
+  stratumPair + side-view tip paraboloid with ghost/highlight ramp +
+  widget stratum mode with a t1 slider), the chamber UI panel, and the
+  light-mode side-view palette. Full suite green: sweep unchanged,
+  walls/sideview (4555 incl. new [STR])/edge/locus/exterior/orient/
+  star/cycle PASS, validate legacy diffs unchanged (max 3.84e-4
+  documented spot), new stratum.mjs battery 1877 checks PASS. Details in
+  task list #15 and the solver.js/sideview.js/widget.js Files entries.
 - DONE (2026-09-14, user-approved same day: "Most of that looks good.
   Write our suggestions down for future agents. We're done for now"):
   the five-task call's
