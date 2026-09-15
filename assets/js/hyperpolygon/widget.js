@@ -1,44 +1,59 @@
 // Hyperpolygon widget: live three.js view of the su(2) polygon computed by ./solver.js.
 // Loaded as an ES module after the vendored three.min.js and OrbitControls.js (global THREE).
 
-import { makeHyperpolygon, stratumPair, PERMUTE_23, starSlots, cycleSlots } from "./solver.js";
+import {
+  makeHyperpolygon,
+  stratumPair,
+  muSU2Coords,
+  PERMUTE_23,
+  starSlots,
+  cycleSlots,
+} from "./solver.js";
 import { makeOrientor } from "./orientation.js";
 import { shortSubsets, chamberInterval, applyBetaDrag, breakingSubsets } from "./chambers.js";
-import { makeSideView, probeExteriorMap, attachmentRs, PERM, CAP_NEAR_INF_W } from "./sideview.js";
+import { makeSideView, probeExteriorMap, attachmentRs, PERM, CAP_NEAR_INF_W, PARALLEL_TOL } from "./sideview.js";
 
 const T_SOLVE_MAX = 0.99;
+// Stratum-mode lim-button band (user request 2026-09-15): while the
+// I-stratum is active the exit button ("lim t->0") shows only when the
+// t slider sits in the first LIM_T0_BAND of its range — the tip end its
+// label names, mirroring the entry button's t >= 0.9 gate.
+const LIM_T0_BAND = 0.1;
 
 const PALETTES = {
   light: {
-    edgeA: 0xc0392b,
-    edgeB: 0x2c5f8a,
+    edgeA: 0x000000,
+    edgeB: 0x0f8a3a,
     edgeYellow: 0xd9a800,
     axes: 0xb0b0b0,
     markers: 0x808080,
-    border: "#d0d0d0",
+    border: "#cfd4da",
     caption: "#666666",
     // side view (task 3, light-mode adaptation): pure white spheres are
     // invisible on the white page, so the central sphere and the ACTIVE
     // (highlighted) exterior sphere / stratum carry a blue-gray tint in
     // light mode; dark mode keeps the original white-on-dark look.
+    // User request 2026-09-15: the UNHIGHLIGHTED central and exterior
+    // spheres share one color (`ext` = `sphere`) — only the highlight
+    // lerp target (extHi) differs.
     sphere: 0xcdd7e2,
     sphereGrey: 0x93a5b8,
-    ext: 0xb9c6d4,
+    ext: 0xcdd7e2,
     extHi: 0x8fa3ba,
     arc: 0x9aa4b2,
     sideBg: null,
   },
   dark: {
-    edgeA: 0xff6b5b,
-    edgeB: 0x7ab3ff,
+    edgeA: 0xffffff,
+    edgeB: 0x3fce65,
     edgeYellow: 0xffd84d,
     axes: 0x555f6e,
     markers: 0x9aa4b2,
-    border: "#3a414b",
+    border: "#4a525e",
     caption: "#a0a0a0",
     sphere: 0xffffff,
     sphereGrey: 0xb0b0b0,
-    ext: 0x9fb0c2,
+    ext: 0xffffff,
     extHi: 0xffffff,
     arc: 0x707c8a,
     sideBg: null,
@@ -51,6 +66,33 @@ function isDark() {
 
 function palette() {
   return PALETTES[isDark() ? "dark" : "light"];
+}
+
+// Spec 15: the L2 norm of the real moment map residuals of a solved pair,
+// over all 7 real components — the three su(2) coordinates of
+// mu_SU2 = Sum_i x_i x_i^dagger - y_i^dagger y_i plus the four per-leg
+// U(1) residuals (1/2)(|x_i|^2 - |y_i|^2) - beta_i. Complex numbers are
+// [re, im] pairs.
+function momentResidual(x, y, beta) {
+  const su2 = muSU2Coords(x, y);
+  let s = su2[0] * su2[0] + su2[1] * su2[1] + su2[2] * su2[2];
+  for (let j = 0; j < 4; j++) {
+    const px =
+      0.5 *
+      (x[0][j][0] * x[0][j][0] +
+        x[0][j][1] * x[0][j][1] +
+        x[1][j][0] * x[1][j][0] +
+        x[1][j][1] * x[1][j][1]);
+    const py =
+      0.5 *
+      (y[j][0][0] * y[j][0][0] +
+        y[j][0][1] * y[j][0][1] +
+        y[j][1][0] * y[j][1][0] +
+        y[j][1][1] * y[j][1][1]);
+    const e = px - py - beta[j];
+    s += e * e;
+  }
+  return Math.sqrt(s);
 }
 
 // Custom range-input styling: a 5px rounded track drawn as a gradient so
@@ -135,46 +177,36 @@ function ensureSliderStyles() {
     "#hyperpolygon-widget .hp-slider:disabled {",
     "  opacity: 0.4;",
     "}",
-    // section labels (2026-09-15): the Moduli Coordinates box header and
-    // the collapsible Parameters tab
+    // section labels: the header of every panel ("MODULI COORDINATES",
+    // "PARAMETERS", ...) — small caps, one consistent style
     "#hyperpolygon-widget .hp-sec-label {",
-    "  font-size: 0.8em;",
+    "  font-size: 0.78em;",
     "  font-weight: 600;",
-    "  letter-spacing: 0.04em;",
+    "  text-transform: uppercase;",
+    "  letter-spacing: 0.07em;",
     "  color: var(--hp-box-tx);",
-    "  margin: 0 0 6px 2px;",
+    "  margin: 0 0 8px 1px;",
     "}",
-    "#hyperpolygon-widget details.hp-params > summary {",
-    "  cursor: pointer;",
-    "  font-size: 0.9em;",
-    "  color: var(--hp-box-tx);",
-    "  margin-bottom: 4px;",
-    "  user-select: none;",
-    "}",
-    // chamber panel (task 2): the beta weights, scale buttons and chamber
-    // inequalities live in one bordered box
+    // control panels (2026-09-15 cleanup): one bordered, rounded, tinted
+    // box style shared by every panel — the matrices readout, Moduli
+    // Coordinates, Parameters and the SL(2,C) details
     "#hyperpolygon-widget .hp-panel {",
+    "  box-sizing: border-box;",
     "  border: 1px solid var(--hp-box-bd);",
-    "  border-radius: 8px;",
-    "  padding: 8px 10px 7px;",
-    "  margin-top: 10px;",
+    "  border-radius: 10px;",
+    "  background: var(--hp-panel-bg);",
+    "  padding: 10px 12px;",
+    "  margin-top: 12px;",
     "}",
-    // \vec{β} for the scale buttons: the combining-arrow codepoint
-    // (U+03B2 + U+20D7) renders badly in most UI fonts, so the arrow is
-    // drawn as a separate ::after glyph positioned above the β.
-    "#hyperpolygon-widget .hp-vec {",
+    // viewports (the polygon, the side view and the two SL(2,C) canvases):
+    // one frame style — same border/radius family as the panels
+    "#hyperpolygon-widget .hp-frame {",
     "  position: relative;",
-    "  display: inline-block;",
-    "}",
-    "#hyperpolygon-widget .hp-vec::after {",
-    "  content: '\\2192';",
-    "  position: absolute;",
-    "  left: 50%;",
-    "  top: -0.95em;",
-    "  transform: translateX(-50%);",
-    "  font-size: 0.55em;",
-    "  line-height: 1;",
-    "  pointer-events: none;",
+    "  box-sizing: border-box;",
+    "  border: 1px solid var(--hp-box-bd);",
+    "  border-radius: 10px;",
+    "  overflow: hidden;",
+    "  background: var(--hp-frame-bg);",
     "}",
     "#hyperpolygon-widget .hp-cross-btn {",
     "  padding: 0 6px;",
@@ -214,10 +246,13 @@ function ensureSliderStyles() {
     "}",
     "#hyperpolygon-widget {",
     "  --hp-red: #e9c2bd;",
+    "  --hp-wall: #c0392b;",
     "  --hp-track: #c9cdd4;",
     "  --hp-thumb: #5b6570;",
     "  --hp-box-bd: #cfd4da;",
     "  --hp-box-tx: #666e78;",
+    "  --hp-panel-bg: rgba(15, 23, 42, 0.028);",
+    "  --hp-frame-bg: rgba(15, 23, 42, 0.016);",
     "  --hp-amber: #9a6a1f;",
     "  --hp-amber-bg: #f4e8d0;",
     "  --hp-btn-bd: #cfd4da;",
@@ -229,10 +264,13 @@ function ensureSliderStyles() {
     "}",
     '[data-theme="dark"] #hyperpolygon-widget {',
     "  --hp-red: #6b3630;",
+    "  --hp-wall: #e07060;",
     "  --hp-track: #454d59;",
     "  --hp-thumb: #a8b2bd;",
     "  --hp-box-bd: #4a525e;",
     "  --hp-box-tx: #a0a8b2;",
+    "  --hp-panel-bg: rgba(148, 163, 184, 0.07);",
+    "  --hp-frame-bg: rgba(148, 163, 184, 0.04);",
     "  --hp-amber: #d9a558;",
     "  --hp-amber-bg: #453519;",
     "  --hp-btn-bd: #4a525e;",
@@ -248,7 +286,7 @@ function ensureSliderStyles() {
 
 function activate(container) {
   ensureSliderStyles();
-  // parabolic weights; the beta sliders stay inside ONE stability
+  // symplectic parameters beta; the beta sliders stay inside ONE stability
   // chamber, fixed at load (chamber model: chambers.js)
   const beta = [0.5, 0.5, 0.5, 0.25];
   // the chamber of the initial beta, recorded as its short subsets — the
@@ -280,7 +318,18 @@ function activate(container) {
     for (let k = 0; k < 3; k++) extMap[k] = null;
     try {
       const probed = probeExteriorMap(beta, chamberShorts).map;
-      for (let k = 0; k < 3; k++) extMap[k] = probed[k];
+      // In dominant chambers every pair is parallel on the t = 0 exterior
+      // stick, so the probe's margin test passes vacuously and the measured
+      // map comes back with duplicate slots ([5,5,5]) — it cannot
+      // distinguish the spheres (all three would highlight together and
+      // share one size). Discard non-distinct measurements; the analytic
+      // rule below (the coherent assignment, constant in every chamber)
+      // then supplies the distinct map.
+      const distinct =
+        probed[0] !== probed[1] && probed[1] !== probed[2] && probed[0] !== probed[2];
+      if (distinct) {
+        for (let k = 0; k < 3; k++) extMap[k] = probed[k];
+      }
     } catch (err) {
       // leave nulls; the fills below restore the spec's three spheres
     }
@@ -298,41 +347,130 @@ function activate(container) {
   }
   fillExtMap();
 
-  // Two-column layout (2026-09-15): left = the polygon view, its caption,
-  // the "Moduli Coordinates" slider section and the SL(2,C) view; right =
-  // the moduli-space side view and the collapsible "Parameters" tab with
-  // the beta/chamber panel. flex-wrap lets narrow containers stack.
+  // Matrix readout (spec 13): the SOLVED representative (x: 2x4, y: 4x2,
+  // complex entries) — the pair that satisfies the moment-map equations
+  // after balancing, not the parameterization ansatz — centered above the
+  // viewports and refreshed on every solve. The y readout shows the phi
+  // action (updatePhiViews rotates it; see below).
+  const matBox = document.createElement("div");
+  matBox.className = "hp-panel";
+  const matLabel = document.createElement("div");
+  matLabel.className = "hp-sec-label";
+  matLabel.textContent = "Solved pair";
+  matBox.appendChild(matLabel);
+  const matRow = document.createElement("div");
+  matRow.style.display = "flex";
+  matRow.style.flexWrap = "wrap";
+  matRow.style.justifyContent = "center";
+  matRow.style.alignItems = "center";
+  matRow.style.gap = "10px 26px";
+  matBox.appendChild(matRow);
+  container.appendChild(matBox);
+  function makeMatrixView(label, rows, cols) {
+    const wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "8px";
+    const lab = document.createElement("span");
+    lab.textContent = label;
+    lab.style.color = "var(--hp-box-tx)";
+    const grid = document.createElement("div");
+    grid.style.display = "grid";
+    grid.style.gridTemplateColumns = "repeat(" + cols + ", auto)";
+    grid.style.columnGap = "14px";
+    grid.style.rowGap = "2px";
+    grid.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    grid.style.fontSize = "0.78em";
+    grid.style.fontVariantNumeric = "tabular-nums";
+    const cells = [];
+    for (let i = 0; i < rows * cols; i++) {
+      const c = document.createElement("span");
+      c.style.textAlign = "right";
+      c.style.whiteSpace = "nowrap";
+      grid.appendChild(c);
+      cells.push(c);
+    }
+    // large parentheses flanking the grid (user request 2026-09-15):
+    // rounded left/right borders spanning the grid's full height draw the
+    // big delimiters; no border color is set, so they inherit the entry
+    // text color (currentColor) in both themes.
+    function makeParen(left) {
+      const p = document.createElement("div");
+      p.style.alignSelf = "stretch";
+      p.style.width = "9px";
+      p.style.boxSizing = "border-box";
+      p.style.borderTop = "2px solid";
+      p.style.borderBottom = "2px solid";
+      if (left) {
+        p.style.borderLeft = "2px solid";
+        p.style.borderTopLeftRadius = "11px";
+        p.style.borderBottomLeftRadius = "11px";
+      } else {
+        p.style.borderRight = "2px solid";
+        p.style.borderTopRightRadius = "11px";
+        p.style.borderBottomRightRadius = "11px";
+      }
+      return p;
+    }
+    wrap.appendChild(lab);
+    wrap.appendChild(makeParen(true));
+    wrap.appendChild(grid);
+    wrap.appendChild(makeParen(false));
+    matRow.appendChild(wrap);
+    return {
+      set: (M) => {
+        for (let i = 0; i < rows; i++) {
+          for (let j = 0; j < cols; j++) cells[i * cols + j].textContent = fmtComplex(M[i][j]);
+        }
+      },
+    };
+  }
+  function fmtComplex(z) {
+    const d = 3;
+    const eps = 0.5 * Math.pow(10, -d);
+    const re = z[0];
+    const im = z[1];
+    if (Math.abs(im) < eps) return re.toFixed(d);
+    return re.toFixed(d) + (im < 0 ? "\u2212" : "+") + Math.abs(im).toFixed(d) + "i";
+  }
+  const matX = makeMatrixView("x =", 2, 4);
+  const matY = makeMatrixView("y =", 4, 2);
+
+  // Two-column layout: left = the polygon view, its caption, the "Moduli
+  // Coordinates" slider section and the SL(2,C) view; right = the moduli-
+  // space side view and the Parameters card with the beta/chamber panel.
+  // Both viewports share equal, square (1:1) dimensions; flex-wrap lets
+  // narrow containers stack.
   const topFlex = document.createElement("div");
   topFlex.style.display = "flex";
   topFlex.style.flexWrap = "wrap";
   topFlex.style.alignItems = "flex-start";
-  topFlex.style.gap = "14px";
+  topFlex.style.gap = "12px";
   container.appendChild(topFlex);
   const leftCol = document.createElement("div");
-  leftCol.style.flex = "1 1 460px";
+  leftCol.style.flex = "1 1 340px";
   leftCol.style.minWidth = "300px";
   topFlex.appendChild(leftCol);
   const rightCol = document.createElement("div");
-  rightCol.style.flex = "1 1 320px";
+  rightCol.style.flex = "1 1 340px";
   rightCol.style.minWidth = "280px";
-  rightCol.style.maxWidth = "440px";
   topFlex.appendChild(rightCol);
 
   const canvasBox = document.createElement("div");
+  canvasBox.className = "hp-frame";
   canvasBox.style.width = "100%";
-  canvasBox.style.height = "420px";
-  canvasBox.style.boxSizing = "border-box";
-  canvasBox.style.position = "relative";
+  canvasBox.style.aspectRatio = "1 / 1";
   leftCol.appendChild(canvasBox);
 
   const caption = document.createElement("div");
-  caption.style.marginTop = "6px";
+  caption.style.marginTop = "8px";
   caption.style.fontSize = "0.85em";
   leftCol.appendChild(caption);
 
   // Moduli Coordinates (2026-09-15): the four moduli sliders sectioned in
-  // one box — (r, theta) share the first row, (t, phi) the second. The
-  // sliders are appended into these rows further down (makeSlider).
+  // one box. The rows are (r, theta) first, (t, phi) second — the t and
+  // theta positions swapped back per user request 2026-09-15. The sliders
+  // are appended into these rows further down (makeSlider).
   const moduliBox = document.createElement("div");
   moduliBox.className = "hp-panel";
   leftCol.appendChild(moduliBox);
@@ -353,10 +491,10 @@ function activate(container) {
   moduliBox.appendChild(modRowTG);
 
   // Top-right overlay (task 1): the chamber's three short pairs, one row
-  // per exterior sphere (south/equator/north at r = 0 / 0.5 / 1), each
-  // naming the two leg vectors that pair indexes. A row turns yellow
-  // while its two vectors are parallel — at the attachment point that
-  // pair is exactly the straight one, so the list indexes the spheres.
+  // per exterior sphere, each naming the two leg vectors that pair
+  // indexes. A row turns yellow while its two vectors are parallel — at
+  // the attachment point that pair is exactly the straight one, so the
+  // list indexes the spheres.
   const pairList = document.createElement("div");
   pairList.className = "hp-pair-list";
   canvasBox.appendChild(pairList);
@@ -367,26 +505,28 @@ function activate(container) {
     pairList.appendChild(row);
     pairRows.push(row);
   }
-  const SUBS = ["\u2080", "\u2081", "\u2082", "\u2083"];
+  // 1-based display subscripts (user request 2026-09-15): the UI names
+  // legs 1..4 everywhere (v₁..v₄, β₁..β₄, subsets {1,4}, ...). The SOLVER
+  // indexing stays 0-based — these strings only map display j -> leg j+1.
+  const SUBS = ["\u2081", "\u2082", "\u2083", "\u2084"];
+  // 1-based subset rendering for tooltips / chamber boxes / the stratum tag
+  const fmtSet = (I) => "{" + I.map((n) => n + 1).join(",") + "}";
   // side label for displayed leg j: the leg VECTOR v_j (from pts[2j] to
   // pts[2j+2]), not the vertices — user correction 2026-09-14; the four
-  // vectors are v0..v3 and the bend points stay unlabeled.
+  // vectors are v1..v4 and the bend points stay unlabeled.
   const sideName = (j) => "v" + SUBS[j];
-  const attachTag = (k) => (k === 0 ? "r=0" : k === 1 ? "r=\u00bd" : "r=1");
   function rebuildPairList() {
     for (let k = 0; k < 3; k++) {
       const S = extMap[k];
       const I = S !== null && S !== undefined ? chamberShorts[S] : null;
       if (!I || I.length !== 2) {
-        pairRows[k].textContent = attachTag(k) + ": \u2014";
+        pairRows[k].textContent = "\u2014";
         pairRows[k].classList.remove("hp-straight");
-        pairRows[k].title = "exterior sphere at " + attachTag(k);
+        pairRows[k].title = "short pair of exterior sphere " + (k + 1);
         continue;
       }
-      pairRows[k].textContent =
-        attachTag(k) + ": " + sideName(I[0]) + " \u2225 " + sideName(I[1]);
-      pairRows[k].title =
-        "short pair {" + I.join(",") + "} \u2014 indexes the exterior sphere at " + attachTag(k);
+      pairRows[k].textContent = sideName(I[0]) + " \u2225 " + sideName(I[1]);
+      pairRows[k].title = "short pair " + fmtSet(I);
     }
   }
   rebuildPairList();
@@ -396,51 +536,48 @@ function activate(container) {
   // scene, this widget only feeds it slider state. It sits to the RIGHT of
   // the polygon view (2026-09-15), above the Parameters tab.
   const sideBox = document.createElement("div");
+  sideBox.className = "hp-frame";
   sideBox.style.width = "100%";
-  sideBox.style.height = "420px";
-  sideBox.style.boxSizing = "border-box";
+  sideBox.style.aspectRatio = "1 / 1";
   rightCol.appendChild(sideBox);
 
-  // Parameters tab (2026-09-15): the beta/chamber panel collapses under
-  // this <details> on the right side, below the moduli-space view.
-  const paramsDetails = document.createElement("details");
-  paramsDetails.className = "hp-params";
-  paramsDetails.open = true;
-  paramsDetails.style.marginTop = "10px";
-  const paramsSummary = document.createElement("summary");
-  paramsSummary.textContent = "Parameters";
-  paramsDetails.appendChild(paramsSummary);
-  rightCol.appendChild(paramsDetails);
+  // Parameters card (spec 14): a flat panel matching the Moduli Coordinates
+  // section — no collapsible container.
+  const paramsCard = document.createElement("div");
+  paramsCard.className = "hp-panel";
+  const paramsLabel = document.createElement("div");
+  paramsLabel.className = "hp-sec-label";
+  paramsLabel.textContent = "Parameters";
+  paramsCard.appendChild(paramsLabel);
+  rightCol.appendChild(paramsCard);
 
   // SL(2,C) view (task 2): the real and imaginary parts of the traceless
   // central moment map polygon (mu_SL, 3 + 3 = 6 real dimensions), drawn
-  // as two small three.js canvases. Collapsed by default; the summary
-  // toggles it. The U(1) phase phi (the slider under t) rotates these
-  // polygons coordinatewise; the su(2) polygon is unaffected by phi.
+  // as two small three.js canvases inside one collapsible panel. Collapsed
+  // by default; the summary toggles it. The phase phi (the slider under t)
+  // acts on y itself (updatePhiViews) — the rotation of these polygons is
+  // the byproduct; the su(2) polygon is unaffected.
   const slDetails = document.createElement("details");
-  slDetails.style.marginTop = "10px";
+  slDetails.className = "hp-panel";
   const slSummary = document.createElement("summary");
   slSummary.textContent = "show SL(2,\u2102) polygons";
+  slSummary.className = "hp-sec-label";
   slSummary.style.cursor = "pointer";
-  slSummary.style.fontSize = "0.9em";
   slDetails.appendChild(slSummary);
   const slRow = document.createElement("div");
   slRow.style.display = "flex";
   slRow.style.flexWrap = "wrap";
   slRow.style.gap = "10px";
-  slRow.style.marginTop = "8px";
   slDetails.appendChild(slRow);
   leftCol.appendChild(slDetails);
 
   const SL_SEG = 5; // 4 leg edges + the v4 -> v0 closing segment
   function makeSlView(tag) {
     const host = document.createElement("div");
+    host.className = "hp-frame";
     host.style.flex = "1 1 300px";
     host.style.height = "300px";
     host.style.minWidth = "240px";
-    host.style.position = "relative";
-    host.style.boxSizing = "border-box";
-    host.style.border = "1px solid " + palette().border;
     slRow.appendChild(host);
     const tagEl = document.createElement("div");
     tagEl.textContent = tag;
@@ -523,15 +660,24 @@ function activate(container) {
       markPos: markPos,
       markGeom: markGeom,
       setBorder: (c) => {
-        host.style.border = "1px solid " + c;
+        host.style.borderColor = c;
       },
     };
   }
   const slRe = makeSlView("Re \u03bc\u209b\u2097");
   const slIm = makeSlView("Im \u03bc\u209b\u2097");
-  // gamma = 0 base data from the last solve (res.sl2); the displayed
-  // polygons are the e^{i·gamma} rotation of these
+  // phi = 0 base data from the last solve: sl2Base = res.sl2 (the SL(2,C)
+  // polygon) and solvedY = res.y (the solved pair's y matrix). The phi
+  // slider acts on y ITSELF — y -> e^{i·phi} y, every entry scaled by the
+  // unit complex number e^{i·phi} (user request 2026-09-15): the y matrix
+  // readout shows the rotated entries, and because u_i = x_col_i · y_row_i
+  // is linear in y, the SL(2,C) polygon rotates coordinatewise by
+  // e^{i·phi} as a BYPRODUCT — the old "rotate the polygons directly"
+  // display hack is gone. The su(2) polygon is untouched (|y|^2 and y†y
+  // are phase-invariant) and the moment-map residuals are unchanged. At
+  // phi = 0 the rotation is bit-exact (cos 0 = 1, sin 0 = 0).
   let sl2Base = null;
+  let solvedY = null;
   const SL_SEG_ENDS = [
     [0, 1],
     [1, 2],
@@ -539,16 +685,21 @@ function activate(container) {
     [3, 4],
     [4, 0],
   ];
-  // Rewrite both SL(2,C) canvases from sl2Base rotated by the current
-  // gamma: each complex coordinate z (of Re and Im arrays) maps to
-  // e^{i·gamma} z, i.e. real' = cos·real − sin·imag, imag' = sin·real +
-  // cos·imag — coordinatewise, exactly the U(1) action on y. At gamma = 0
-  // this writes the base data bit-exactly (cos 0 = 1, sin 0 = 0).
-  function updateSlViews() {
-    if (!sl2Base) return;
+  // Apply the current phi to the two things it acts on: the y matrix
+  // readout (entrywise rotation by e^{i·phi}) and the SL(2,C) canvases
+  // (the byproduct). Never triggers a solver run.
+  function updatePhiViews() {
     const g = parseFloat(phiInput.value) * Math.PI;
     const c = Math.cos(g);
     const s = Math.sin(g);
+    if (solvedY) {
+      matY.set(
+        solvedY.map((row) =>
+          row.map((z) => [c * z[0] - s * z[1], s * z[0] + c * z[1]])
+        )
+      );
+    }
+    if (!sl2Base) return;
     for (let vi = 0; vi < 2; vi++) {
       const view = vi === 0 ? slRe : slIm;
       const isIm = vi === 1;
@@ -575,13 +726,10 @@ function activate(container) {
     }
   }
 
-  // Chamber panel (task 2): the parabolic weights, their scale buttons and
-  // the chamber inequalities grouped in one bordered box — inside the
-  // collapsible Parameters tab on the right (2026-09-15).
-  const panel = document.createElement("div");
-  panel.className = "hp-panel";
-  panel.style.marginTop = "0";
-  paramsDetails.appendChild(panel);
+  // Chamber content (task 2 + spec 14): the beta sliders, their scale
+  // buttons and the chamber inequalities live directly in the flat
+  // Parameters card (alias `panel` below) — no nested box, no collapse.
+  const panel = paramsCard;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -620,12 +768,15 @@ function activate(container) {
   const polyGroup = new THREE.Group();
   scene.add(polyGroup);
 
-  // Polygon edges (task 4, 2026-09-15): WebGL ignores LineBasicMaterial's
-  // linewidth, so thin GL lines can't be thickened — each of the 8
-  // segments is instead a unit cylinder mesh, scaled and oriented per
-  // frame. EDGE_RADIUS_REL * polygon-scale gives a slightly thicker stroke
-  // that always reads, at every polygon size.
-  const EDGE_RADIUS_REL = 0.007;
+  // Polygon edges (task 4, 2026-09-15; spec 5 update): WebGL ignores
+  // LineBasicMaterial's linewidth, so each of the 8 segments is a unit
+  // cylinder mesh. The thickness is DECOUPLED from the polygon's own
+  // scale: the radius is recomputed every frame so the stroke stays a
+  // fixed fraction of the viewport height at the current camera zoom
+  // (perspective: world height at the orbit target = 2*dist*tan(fov/2)),
+  // keeping the edges clearly visible at every zoom level.
+  const EDGE_SCREEN_FRAC = 0.0035;
+  let edgeRad = 0.01;
   const edgeGeomUnit = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false);
   const edgeMeshes = [];
   const segBase = [];
@@ -639,7 +790,7 @@ function activate(container) {
   }
   const edgeUp = new THREE.Vector3(0, 1, 0);
   const edgeDir = new THREE.Vector3();
-  function setSegment(seg, a, b, scale) {
+  function setSegment(seg, a, b) {
     const m = edgeMeshes[seg];
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
@@ -651,9 +802,18 @@ function activate(container) {
     }
     m.visible = true;
     m.position.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
-    m.scale.set(EDGE_RADIUS_REL * scale, len, EDGE_RADIUS_REL * scale);
+    m.scale.set(edgeRad, len, edgeRad);
     edgeDir.set(dx / len, dy / len, dz / len);
     m.quaternion.setFromUnitVectors(edgeUp, edgeDir);
+  }
+  function updateEdgeRadii() {
+    const dist = camera.position.distanceTo(controls.target);
+    edgeRad = 2 * dist * Math.tan((camera.fov * Math.PI) / 360) * EDGE_SCREEN_FRAC;
+    for (let s = 0; s < 8; s++) {
+      if (!edgeMeshes[s].visible) continue;
+      edgeMeshes[s].scale.x = edgeRad;
+      edgeMeshes[s].scale.z = edgeRad;
+    }
   }
 
   const markPos = new Float32Array(9 * 3);
@@ -665,8 +825,11 @@ function activate(container) {
   // Edge labels (task 1): one sprite per displayed leg, drawn into a
   // canvas texture (crisp at any zoom, theme-colored via applyColors).
   // The sprite sits at the midpoint of the leg segment and names the leg
-  // VECTOR v_j (j = 0..3); scale follows the polygon scale so the labels
-  // shrink/grow with the drawing. The bend points stay unlabeled.
+  // VECTOR v_j (j = 0..3); like the cylinder edges, its size tracks the
+  // camera zoom (LABEL_SCREEN_FRAC of the viewport height, recomputed
+  // every frame in updateLabelScales) so it neither grows with the
+  // polygon as t gets large nor fades when the user zooms out. The bend
+  // points stay unlabeled.
   const sideLabelSprites = [];
   function drawLabelTexture(sp, text, colorCss) {
     const pad = 14;
@@ -707,6 +870,23 @@ function activate(container) {
     drawLabelTexture(sp, sideName(i), palette().caption);
   }
 
+  // Label size (user request 2026-09-15): a fixed fraction of the viewport
+  // height at the CURRENT camera distance — the same rule as the cylinder
+  // edges (perspective: world height at the orbit target =
+  // 2*dist*tan(fov/2)) — so zooming rescales labels exactly like the
+  // edges, while the polygon's own scale (t -> infinity) does not.
+  const LABEL_SCREEN_FRAC = 0.03;
+  function updateLabelScales() {
+    const dist = camera.position.distanceTo(controls.target);
+    const labelScale = 2 * dist * Math.tan((camera.fov * Math.PI) / 360) * LABEL_SCREEN_FRAC;
+    for (let i = 0; i < 4; i++) {
+      const sp = sideLabelSprites[i];
+      const asp = sp.userData.aspect || 3;
+      sp.scale.set(labelScale * asp, labelScale, 1);
+      sp.visible = !!lastVerts && labelScale > 1e-4;
+    }
+  }
+
   // Task 1 parallel-pair state. legSine[p] is the sine of the angle
   // between the v-side directions of LEG_PAIRS[p] (zero = parallel);
   // threshold matches sideview.js's probe tolerance. A pair entering
@@ -722,7 +902,10 @@ function activate(container) {
     [1, 3],
     [2, 3],
   ];
-  const PAIR_SINE_TOL = 1e-3;
+  // alias of sideview.js's PARALLEL_TOL (imported): the polygon view's
+  // straight-pair highlight and the side view's attachment-pair probe must
+  // never disagree about which pair is straight
+  const PAIR_SINE_TOL = PARALLEL_TOL;
   const BLINK_PERIOD = 0.9;
   const legSine = new Array(6).fill(Infinity);
   const legParallel = new Array(6).fill(false);
@@ -773,9 +956,8 @@ function activate(container) {
     for (let seg = 0; seg < 8; seg++) {
       segBase[seg].copy(seg % 2 === 0 ? colA : colB);
     }
-    canvasBox.style.border = "1px solid " + pal.border;
+    canvasBox.style.borderColor = pal.border;
     caption.style.color = pal.caption;
-    betaHeader.style.color = pal.caption;
     chamberLabel.style.color = pal.caption;
     // edge-label sprites: redraw the textures in the theme color
     for (let i = 0; i < sideLabelSprites.length; i++) {
@@ -841,7 +1023,7 @@ function activate(container) {
       null,
       pts.map((p) => Math.hypot(p[0], p[1], p[2]))
     );
-    for (let seg = 0; seg < 8; seg++) setSegment(seg, pts[seg], pts[seg + 1], scale);
+    for (let seg = 0; seg < 8; seg++) setSegment(seg, pts[seg], pts[seg + 1]);
     for (let i = 0; i < 9; i++) {
       markPos[i * 3] = pts[i][0];
       markPos[i * 3 + 1] = pts[i][1];
@@ -849,6 +1031,10 @@ function activate(container) {
     }
     markGeom.attributes.position.needsUpdate = true;
     applyColors();
+    // Spec 13: the live matrix readout shows the solved representative
+    // (balanced, moment-map satisfying); updatePhiViews below writes the
+    // y half, rotated by the current phi
+    matX.set(res.x);
 
     // Task 1: v-side parallelism. Each displayed leg's v-side direction
     // is the segment (pts[2j], pts[2j+1]); two legs are parallel when the
@@ -898,7 +1084,7 @@ function activate(container) {
     }
 
     // Task 1: edge labels at the side midpoints, pushed away from the
-    // polygon centroid
+    // polygon centroid (their SIZE is set per frame in updateLabelScales)
     let cen = [0, 0, 0];
     for (let i = 0; i < 9; i++) {
       cen[0] += pts[i][0];
@@ -906,7 +1092,6 @@ function activate(container) {
       cen[2] += pts[i][2];
     }
     cen = [cen[0] / 9, cen[1] / 9, cen[2] / 9];
-    const labelScale = 0.07 * scale;
     for (let i = 0; i < 4; i++) {
       const sp = sideLabelSprites[i];
       const mx = (pts[2 * i][0] + pts[2 * i + 2][0]) / 2;
@@ -922,30 +1107,28 @@ function activate(container) {
       } else {
         sp.position.set(mx, my, mz);
       }
-      const asp = sp.userData.aspect || 3;
-      sp.scale.set(labelScale * asp, labelScale, 1);
-      sp.visible = labelScale > 1e-4;
     }
 
-    // Task 2/3: SL(2,C) base data + the gamma rotation
+    // Task 2/3: phi base data — the solved y (the phase acts on it) and
+    // the SL(2,C) polygon; updatePhiViews applies the current phi to the
+    // y readout and (as the byproduct) the SL canvases
+    solvedY = res.y;
     sl2Base = res.sl2;
-    updateSlViews();
-    const closure = Math.hypot(pts[8][0], pts[8][1], pts[8][2]);
-    let text =
-      "su(2) residual " +
-      res.accuracy.su2Norm.toExponential(1) +
-      " · closure " +
-      closure.toExponential(1);
+    updatePhiViews();
+    // Spec 15: a single scalar — the L2 norm of the real moment map
+    // residuals (the 3 su(2) components + the 4 per-leg U(1) components),
+    // computed from the solved representative. The closure readout is gone.
+    const muRes = momentResidual(res.x, res.y, beta);
+    let text = "moment map residual " + muRes.toExponential(1);
     if (stratum) {
       text +=
-        " · I-stratum {" +
-        stratum.I.join(",") +
-        "} ∥ {" +
-        stratum.comp.join(",") +
-        "}";
+        " · I-stratum " +
+        fmtSet(stratum.I) +
+        " ∥ " +
+        fmtSet(stratum.comp);
     }
     if (
-      !Number.isFinite(closure) ||
+      !Number.isFinite(muRes) ||
       res.accuracy.su2Norm > 1e-6 ||
       res.accuracy.muU1Error > 1e-6
     ) {
@@ -1007,8 +1190,13 @@ function activate(container) {
     return input;
   }
 
+  // Spec 8: r snaps magnetically at the poles r = 0 and r = 1 (tol 0.05 =
+  // 10 slider steps — the attachment points of the exterior spheres) in
+  // addition to the equator snap at 0.5.
   const rInput = makeSlider("r", 0, 1, 0.005, 0.5, (v) => v.toFixed(3), [
+    { value: 0, tol: 0.05 },
     { value: 0.5, tol: 0.02 },
+    { value: 1, tol: 0.05 },
   ], false, modRowRT);
   const thetaInput = makeSlider(
     "\u03b8",
@@ -1040,23 +1228,27 @@ function activate(container) {
   tInput.title =
     "flow parameter t (readout t/(1-t)); after lim t\u2192\u221e it drives the I-stratum (0 = tip slice)";
   // stack the lim button BELOW the t slider (2026-09-15): wrap the slider
-  // row in a column and put the button under it
+  // row in a column and put the button under it. tCol lives in the SECOND
+  // moduli row (user request 2026-09-15: the screen positions of t and
+  // theta are swapped back, so row 1 is (r, theta) and row 2 is (t, phi)).
   const tCol = document.createElement("div");
   tCol.style.display = "flex";
   tCol.style.flexDirection = "column";
   tCol.style.gap = "3px";
   tCol.style.flex = "1 1 220px";
   tCol.style.minWidth = "200px";
-  modRowTG.insertBefore(tCol, tInput.parentNode);
   tCol.appendChild(tInput.parentNode);
   tInput.parentNode.style.flex = "1 1 auto";
-  // phi (the U(1) phase; renamed from gamma, 2026-09-15): e^{i·phi} acting
-  // on y. Moment-map preserving; fixes the su(2) polygon (|y|^2 and y†y
-  // are phase-invariant), rotates the SL(2,C) polygons coordinatewise, and
-  // in the side view rotates the dot along the level circles of the
-  // exterior spheres / paraboloids. t = 0 points are fixed (attachment
-  // points and the apex are on the rotation axes), matching the moduli
-  // picture.
+  // phi (the U(1) phase; renamed from gamma, 2026-09-15): y -> e^{i·phi} y,
+  // every entry of the y matrix scaled by the unit complex number
+  // e^{i·phi} (user request 2026-09-15 — it acts on y itself, visible in
+  // the matrix readout; the SL(2,C) rotation is the byproduct). Moment-map
+  // preserving: |y_i|^2 and y_i† y_i are phase-invariant, so the su(2)
+  // polygon and the residuals are fixed. In the side view the same phi
+  // rotates the dot along the level circles of the exterior spheres /
+  // paraboloids; t = 0 points are fixed (attachment points and the apex
+  // are on the rotation axes), matching the moduli picture. noSolve: this
+  // is a display-side action on the SOLVED pair — never a solver run.
   const phiInput = makeSlider(
     "\u03c6",
     -1,
@@ -1069,12 +1261,19 @@ function activate(container) {
     modRowTG
   );
   phiInput.title =
-    "U(1) phase e^{i\u03c6} on y \u2014 rotates the SL(2,\u2102) polygons and the " +
-    "side-view dot along level circles; t = 0 points are fixed";
+    "U(1) phase e\u2071\u03c6 acting on y itself \u2014 every entry of the y " +
+    "matrix is scaled by the unit complex number e\u2071\u03c6 (watch the readout); " +
+    "the side-view dot rides the level circles; t = 0 points are fixed";
   phiInput.addEventListener("input", () => {
-    updateSlViews();
+    updatePhiViews();
     refreshSide();
   });
+  // Row placement: row 1 = (r, theta) — the sliders' creation rows; row 2
+  // = (t, phi) — but phiBox is created before tCol exists, so tCol is
+  // inserted before it here (a move, not a swap: the t/theta screen swap
+  // of spec 11 is reverted per user request 2026-09-15, and the former
+  // swap block — with its phiInput TDZ hazard — is gone).
+  modRowTG.insertBefore(tCol, phiInput.parentNode);
 
   // I-stratum mode (the "lim t→∞" click, task 2 rework 2026-09-15): while
   // active, the r/θ sliders are parked and disabled at the attachment
@@ -1142,8 +1341,10 @@ function activate(container) {
     // task 2: the t slider jumps to position 0 = the tip slice
     tInput.value = "0";
     tInput.dispatchEvent(new Event("input"));
-    limBtn.textContent = "leave stratum";
-    limBtn.title = "leave the stratum (t jumps back to infinity on the exterior sphere)";
+    // spec 3: consistent notation with the entry control — the inverse
+    // limit t -> 0 is the stratum's tip slice
+    limBtn.textContent = "lim t\u21920";
+    limBtn.title = "leave the I-stratum (t jumps back to infinity on the exterior sphere)";
     scheduleSolve();
     refreshSide();
   }
@@ -1197,9 +1398,12 @@ function activate(container) {
       stratum ? { k: stratum.k, t1: t } : null
     );
     lastSideState = st;
-    // the button shows near the t -> infinity end of an exterior sphere,
-    // and STAYS while the stratum is active (it becomes "leave stratum")
-    limBtn.style.display = st && (st.nearInfinity || stratum) ? "" : "none";
+    // Button visibility (user request 2026-09-15): outside the stratum the
+    // entry button ("lim t->infinity") shows near the t -> infinity end of
+    // an exterior sphere (flowState's nearInfinity); inside the stratum the
+    // exit button ("lim t->0") shows only when the t slider is near 0.
+    const nearT0 = parseFloat(tInput.value) <= LIM_T0_BAND;
+    limBtn.style.display = (stratum ? nearT0 : !!(st && st.nearInfinity)) ? "" : "none";
   }
   function setTHover(on) {
     if (tHover === on) return;
@@ -1212,16 +1416,126 @@ function activate(container) {
   tInput.addEventListener("focus", () => setTHover(true));
   tInput.addEventListener("blur", () => setTHover(false));
 
-  // beta sliders: the red spans at the slider edges are the parts beyond
-  // the fixed chamber's walls, recomputed on every change (see
-  // chamberShorts above)
-  const betaHeader = document.createElement("div");
-  betaHeader.style.flex = "1 1 100%";
-  betaHeader.style.marginTop = "2px";
-  betaHeader.style.fontSize = "0.85em";
-  betaHeader.textContent =
-    "β — parabolic weights · red: past a chamber wall — dragging pins there; the chamber stays fixed · an amber box's Cross Wall button flips that inequality";
-  panel.appendChild(betaHeader);
+  // Spec 10: the instructional text is gone; in its place two
+  // synchronized 1x1 plots — 2D slices of the parameter space in the
+  // (beta0, beta1) and (beta2, beta3) planes, the other two coordinates
+  // held fixed. The tracked chamber's seven wall equalities render as red
+  // lines; the current parameter pair is the black dot. Both plots redraw
+  // on every beta change (syncBetaSliders).
+  const SUBSCRIPTS = SUBS; // 1-based display subscripts (shared with sideName)
+  function cssVar(name) {
+    return getComputedStyle(document.getElementById("hyperpolygon-widget"))
+      .getPropertyValue(name)
+      .trim();
+  }
+  // Cached theme colors for the slice-plot draw loop: getComputedStyle
+  // reads force style recalcs, and the values only change on a theme
+  // switch — which re-runs refreshPlotColors via the data-theme observer
+  // (review fix 2026-09-15; light defaults keep the canvas sane if the
+  // read lands before the styles resolve).
+  let plotBoxBd = "#cfd4da";
+  let plotWall = "#c0392b";
+  function refreshPlotColors() {
+    plotBoxBd = cssVar("--hp-box-bd");
+    plotWall = cssVar("--hp-wall");
+  }
+  refreshPlotColors();
+  const slicePlots = [];
+  function makeSlicePlot(ix, iy) {
+    const wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.flexDirection = "column";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "1px";
+    const cnv = document.createElement("canvas");
+    const size = 110;
+    cnv.style.width = size + "px";
+    cnv.style.height = size + "px";
+    cnv.style.display = "block";
+    wrap.appendChild(cnv);
+    const cap = document.createElement("div");
+    cap.style.fontSize = "0.75em";
+    cap.style.color = "var(--hp-box-tx)";
+    cap.textContent = "\u03b2" + SUBSCRIPTS[ix] + ", \u03b2" + SUBSCRIPTS[iy];
+    wrap.appendChild(cap);
+    sliceRow.appendChild(wrap);
+    const PAD = 7;
+    const toPx = (u) => PAD + u * (size - 2 * PAD);
+    const toPy = (v) => size - PAD - v * (size - 2 * PAD);
+    function draw() {
+      const dpr = window.devicePixelRatio || 1;
+      if (cnv.width !== Math.round(size * dpr)) {
+        cnv.width = Math.round(size * dpr);
+        cnv.height = Math.round(size * dpr);
+      }
+      const ctx = cnv.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size, size);
+      ctx.strokeStyle = plotBoxBd;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(PAD + 0.5, PAD + 0.5, size - 2 * PAD - 1, size - 2 * PAD - 1);
+      // the fixed coordinates of this slice
+      const others = [];
+      for (let n = 0; n < 4; n++) if (n !== ix && n !== iy) others.push(n);
+      // wall lines: 2*sum_I = total  ->  a*u + b*v + c = 0 with u = beta_ix,
+      // v = beta_iy and the other two coordinates fixed
+      ctx.strokeStyle = plotWall;
+      ctx.lineWidth = 1.5;
+      for (let k = 1; k < chamberShorts.length; k++) {
+        const I = chamberShorts[k];
+        const a = 2 * (I.indexOf(ix) !== -1 ? 1 : 0) - 1;
+        const b = 2 * (I.indexOf(iy) !== -1 ? 1 : 0) - 1;
+        let sumIf = 0;
+        for (let m = 0; m < I.length; m++) {
+          if (I[m] !== ix && I[m] !== iy) sumIf += beta[I[m]];
+        }
+        const c = 2 * sumIf - (beta[others[0]] + beta[others[1]]);
+        if (a === 0 && b === 0) continue;
+        const pts = [];
+        if (Math.abs(b) > 1e-12) {
+          const v0 = -c / b;
+          const v1 = -(c + a) / b;
+          if (v0 >= -1e-9 && v0 <= 1 + 1e-9) pts.push([0, v0]);
+          if (v1 >= -1e-9 && v1 <= 1 + 1e-9) pts.push([1, v1]);
+        }
+        if (Math.abs(a) > 1e-12) {
+          const u0 = -c / a;
+          const u1 = -(c + b) / a;
+          if (u0 >= -1e-9 && u0 <= 1 + 1e-9) pts.push([u0, 0]);
+          if (u1 >= -1e-9 && u1 <= 1 + 1e-9) pts.push([u1, 1]);
+        }
+        if (pts.length < 2) continue;
+        const p0 = pts[0];
+        const p1 = pts[pts.length - 1];
+        ctx.beginPath();
+        ctx.moveTo(toPx(p0[0]), toPy(p0[1]));
+        ctx.lineTo(toPx(p1[0]), toPy(p1[1]));
+        ctx.stroke();
+      }
+      // the active parameter pair
+      ctx.fillStyle = "#000000";
+      ctx.strokeStyle = plotBoxBd;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(toPx(beta[ix]), toPy(beta[iy]), 3, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    }
+    const plot = { draw: draw };
+    slicePlots.push(plot);
+    return plot;
+  }
+  const sliceRow = document.createElement("div");
+  sliceRow.style.flex = "1 1 100%";
+  sliceRow.style.display = "flex";
+  sliceRow.style.gap = "18px";
+  sliceRow.style.justifyContent = "center";
+  panel.appendChild(sliceRow);
+  makeSlicePlot(0, 1);
+  makeSlicePlot(2, 3);
+  function drawSlicePlots() {
+    for (let k = 0; k < slicePlots.length; k++) slicePlots[k].draw();
+  }
 
   // dedicated beta-slider row: an explicit grid whose column count (4, 2
   // or 1) is picked from the measured width. A flex-wrap row with a
@@ -1233,6 +1547,7 @@ function activate(container) {
   betaRow.style.display = "grid";
   betaRow.style.columnGap = "16px";
   betaRow.style.rowGap = "2px";
+  betaRow.style.marginTop = "10px";
   panel.appendChild(betaRow);
   function pickBetaColumns() {
     const w = betaRow.clientWidth;
@@ -1244,7 +1559,7 @@ function activate(container) {
   const betaInputs = [];
   const betaReadouts = [];
   function makeBetaSlider(i) {
-    const labels = ["β₀", "β₁", "β₂", "β₃"];
+    const labels = ["\u03b2\u2081", "\u03b2\u2082", "\u03b2\u2083", "\u03b2\u2084"];
     const box = document.createElement("div");
     box.style.display = "flex";
     box.style.alignItems = "center";
@@ -1300,91 +1615,24 @@ function activate(container) {
         (100 * Math.min(Math.max(iv.hi, 0), 1)).toFixed(4) + "%"
       );
     }
-    syncScaleButtons();
+    drawSlicePlots();
     syncChamberBoxes();
   }
 
   for (let i = 0; i < 4; i++) {
     makeBetaSlider(i);
   }
-
-  // scale buttons: chambers are scale-invariant (the wall inequalities are
-  // homogeneous in beta), so uniform scaling never crosses a wall — no
-  // clamping is needed, the whole state is just re-synced from the scaled
-  // tuple. Factors are SUBTLE by design (user request 2026-09-13 — the old
-  // x0.25 / up-to-x4 steps maxed weights out in one click): down x0.8, up
-  // x1.25, clamped to 1/max so the largest weight lands exactly on the
-  // slider limit 1.0 (pinned exactly — x*(1/x) can land 1 ulp off). The
-  // Scale Down floor 0.02 exists because chamberInterval's hard
-  // WALL_MARGIN = 0.003 0-wall floor collapses the displayed allowed spans
-  // once the tuple scale approaches ~2*WALL_MARGIN (the solver itself is
-  // scale-robust far below that).
-  const SCALE_UP_FACTOR = 1.25;
-  const SCALE_DOWN_FACTOR = 0.8;
-  const SCALE_DOWN_MIN = 0.02;
-  const scaleRow = document.createElement("div");
-  scaleRow.style.flex = "1 1 100%";
-  scaleRow.style.display = "flex";
-  scaleRow.style.gap = "8px";
-  scaleRow.style.marginTop = "8px";
-  // \vec{β} via the .hp-vec CSS overarrow (the combining codepoint renders
-  // badly); extra top padding clears the arrow above the button label
-  function vecBeta() {
-    const s = document.createElement("span");
-    s.className = "hp-vec";
-    s.textContent = "\u03b2";
-    return s;
-  }
-  const scaleDownBtn = document.createElement("button");
-  scaleDownBtn.type = "button";
-  scaleDownBtn.className = "hp-btn";
-  scaleDownBtn.style.paddingTop = "5px";
-  scaleDownBtn.append("Scale ", vecBeta(), " Down");
-  const scaleUpBtn = document.createElement("button");
-  scaleUpBtn.type = "button";
-  scaleUpBtn.className = "hp-btn";
-  scaleUpBtn.style.paddingTop = "5px";
-  scaleUpBtn.append("Scale ", vecBeta(), " Up");
-  scaleRow.appendChild(scaleDownBtn);
-  scaleRow.appendChild(scaleUpBtn);
-  panel.appendChild(scaleRow);
-
-  function syncScaleButtons() {
-    let mx = 0;
-    for (let i = 0; i < 4; i++) if (beta[i] > mx) mx = beta[i];
-    scaleUpBtn.disabled = mx >= 1 - 1e-12;
-    scaleDownBtn.disabled = mx * SCALE_DOWN_FACTOR < SCALE_DOWN_MIN;
-  }
-
-  scaleDownBtn.addEventListener("click", () => {
-    if (scaleDownBtn.disabled) return;
-    for (let i = 0; i < 4; i++) beta[i] *= SCALE_DOWN_FACTOR;
-    syncBetaSliders();
-    scheduleSolve();
-  });
-  scaleUpBtn.addEventListener("click", () => {
-    if (scaleUpBtn.disabled) return;
-    let mx = 0;
-    let arg = 0;
-    for (let i = 0; i < 4; i++)
-      if (beta[i] > mx) {
-        mx = beta[i];
-        arg = i;
-      }
-    const f = Math.min(SCALE_UP_FACTOR, 1 / mx);
-    for (let i = 0; i < 4; i++) beta[i] *= f;
-    // when the factor was clamped to 1/max, x * (1/x) can land 1 ulp off
-    // 1.0, so pin the largest weight exactly
-    if (f === 1 / mx) beta[arg] = 1;
-    syncBetaSliders();
-    scheduleSolve();
-  });
+  // user request 2026-09-15: the screen positions of the beta_1 and beta_2
+  // sliders are swapped (labels stay with their values — the display order
+  // becomes beta_0, beta_2, beta_1, beta_3). Moving the node keeps its
+  // listeners.
+  betaRow.insertBefore(betaInputs[1].parentNode, betaInputs[3].parentNode);
 
   // one box per tracked inequality (shortSubsets slot order, the trivial
   // split omitted); amber while its wall is touched, tooltip shows the
-  // live subset sums
-  const SUB = ["₀", "₁", "₂", "₃"];
-  const fmtSet = (I) => "{" + I.join(",") + "}";
+  // live subset sums. (The Scale β Down/Up buttons are GONE — user request
+  // 2026-09-15; the beta sliders alone drive the tuple within the chamber.)
+  const SUB = SUBS; // 1-based display subscripts (shared with sideName)
   const betaTerm = (I) =>
     I.length === 0 ? "0" : I.map((n) => "β" + SUB[n]).join("+");
   const chamberRow = document.createElement("div");
@@ -1393,10 +1641,10 @@ function activate(container) {
   chamberRow.style.flexWrap = "wrap";
   chamberRow.style.alignItems = "center";
   chamberRow.style.gap = "6px";
-  chamberRow.style.marginTop = "2px";
+  chamberRow.style.marginTop = "10px";
   const chamberLabel = document.createElement("span");
   chamberLabel.style.fontSize = "0.85em";
-  chamberLabel.textContent = "chamber (fixed):";
+  chamberLabel.textContent = "Chamber Inequalities:";
   chamberRow.appendChild(chamberLabel);
   const chamberBoxes = [];
   for (let k = 1; k < chamberShorts.length; k++) {
@@ -1455,77 +1703,15 @@ function activate(container) {
     }
   }
 
-  // true when the tuple sits inside the closure of the tracked chamber
-  // (every leg within its closed chamberInterval, tolerance for fp noise)
-  function inTrackedChamber(t) {
-    for (let i = 0; i < 4; i++) {
-      const iv = chamberInterval(i, t, chamberShorts);
-      if (t[i] < iv.lo - 1e-12 || t[i] > iv.hi + 1e-12) return false;
-    }
-    return true;
-  }
-
-  // push beta across the just-flopped wall into the NEW chamber: the old
-  // short subset I had sum_I === sum_complement; grow the legs of I by
-  // eps in total (sequential fill, bounded by the slider max 1) so
-  // sum_I - sum_C becomes positive, or — if the legs of I have no room —
-  // shrink the complement legs by eps instead. Growing one leg at a time
-  // (rather than uniformly) matters at coincident walls: growing all legs
-  // of I by the same amount slides along a coincident pair wall and keeps
-  // it breaking. eps halves while the candidate leaves the new chamber
-  // (other walls, the 0-wall floor, the slider limits); if nothing fits
-  // (fully pinched corner) the nudge is skipped and beta stays on the
-  // wall. Mutates beta in place.
-  function nudgeAcross(I, comp) {
-    let eps = 0.05 * Math.max(beta[0], beta[1], beta[2], beta[3]);
-    for (let attempt = 0; attempt < 8 && eps > 1e-9; attempt++) {
-      const up = beta.slice();
-      let remaining = eps;
-      for (let m = 0; m < I.length && remaining > 0; m++) {
-        const n = I[m];
-        const d = Math.min(remaining, Math.max(1 - up[n], 0));
-        up[n] += d;
-        remaining -= d;
-      }
-      if (remaining < eps) {
-        let sI = 0;
-        let sC = 0;
-        for (let m = 0; m < I.length; m++) sI += up[I[m]];
-        for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) sC += up[n];
-        if (sI - sC > 1e-12 && inTrackedChamber(up)) {
-          for (let i = 0; i < 4; i++) beta[i] = up[i];
-          return true;
-        }
-      }
-      const down = beta.slice();
-      remaining = eps;
-      for (let m = 0; m < comp.length && remaining > 0; m++) {
-        const n = comp[m];
-        const d = Math.min(remaining, Math.max(down[n], 0));
-        down[n] -= d;
-        remaining -= d;
-      }
-      if (remaining < eps) {
-        let sI = 0;
-        let sC = 0;
-        for (let m = 0; m < I.length; m++) sI += down[I[m]];
-        for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) sC += down[n];
-        if (sI - sC > 1e-12 && inTrackedChamber(down)) {
-          for (let i = 0; i < 4; i++) beta[i] = down[i];
-          return true;
-        }
-      }
-      eps *= 0.5;
-    }
-    return false;
-  }
-
   // the Cross Wall action on box k: flop split k (chamberShorts[k] is
   // replaced by its complement — the tracked chamber moves to the one on
-  // the other side of that wall), nudge beta across the wall into the new
-  // chamber, re-sync everything and re-solve. The flopped inequality is no
-  // longer at equality after a successful nudge, so the box un-highlights;
-  // dragging back to the wall re-highlights it and allows crossing back.
+  // the other side of that wall) and re-sync. Spec 9: the beta sliders do
+  // NOT jump away from the wall — the tuple stays pinned exactly against
+  // the crossed wall (now the new chamber's boundary) and only the active
+  // red boundary thresholds re-sync to the new chamber (syncBetaSliders).
+  // The flopped box stays amber (the pinned wall is still at equality), so
+  // crossing back — or dragging off the wall into the interior — both
+  // remain available.
   function crossWall(k) {
     // a wall crossing can invalidate the stratum (the flopped split's
     // short side changes) — leave the stratum first
@@ -1534,7 +1720,6 @@ function activate(container) {
     const comp = [];
     for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) comp.push(n);
     chamberShorts[k] = comp;
-    nudgeAcross(I, comp);
     // the exterior-sphere <-> short-pair correspondence is chamber-
     // dependent: re-probe the attachment map for the NEW chamber and
     // rebuild the top-right pair list (task 1)
@@ -1558,7 +1743,15 @@ function activate(container) {
   new ResizeObserver(resize).observe(canvasBox);
   resize();
 
-  new MutationObserver(applyColors).observe(document.documentElement, {
+  // Theme switch: refresh the cached slice-plot colors, then re-apply the
+  // palette and redraw the plots ONCE (the plots depend only on beta + the
+  // chamber, never on a solve — their per-event redraw lives solely in
+  // syncBetaSliders/crossWall; review fix 2026-09-15).
+  new MutationObserver(() => {
+    refreshPlotColors();
+    applyColors();
+    drawSlicePlots();
+  }).observe(document.documentElement, {
     attributes: true,
     attributeFilter: ["data-theme"],
   });
@@ -1580,6 +1773,10 @@ function activate(container) {
     }
     // yellow edge overrides (straight pair solid, blink pulse decaying)
     updateEdgeColors(now);
+    // spec 5: edge thickness tracks the camera zoom every frame
+    updateEdgeRadii();
+    // user request 2026-09-15: label size tracks the camera zoom too
+    updateLabelScales();
     controls.update();
     renderer.render(scene, camera);
     // SL(2,C) views render only while expanded (task 2)

@@ -1,4 +1,4 @@
-// Stability-chamber geometry for the star-quiver parabolic weights
+// Stability-chamber geometry for the star-quiver symplectic parameters
 // beta = (b0, b1, b2, b3), shared by the browser widget and the Node
 // harness (dev/hyperpolygon/walls.mjs). Dependency-free ES module.
 //

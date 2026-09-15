@@ -3,8 +3,8 @@
 // JavaScript port of the Mathematica pipeline in
 // "Torelli Parameters and Hitchin Section.nb", Section 9,
 // subsection "Full Moduli Space": a star-shaped quiver with a
-// central C^2 vertex and four outer C vertices. For parabolic
-// weights beta (4 positive reals) and parameters (r, theta, t),
+// central C^2 vertex and four outer C vertices. For symplectic
+// parameters beta (4 positive reals) and parameters (r, theta, t),
 // finds the representative (x, y) solving
 //   mu_C(x, y) = 0,  mu_SL(x, y) = 0,  mu_U1(x, y) = beta,  mu_SU2(x, y) = 0
 // and returns polygon vertex data for display.
@@ -749,7 +749,7 @@ function swapLegs23(x, y) {
 
 // ===== Exterior branch (dominant chamber, t = 0) =====
 //
-// When one parabolic weight dominates, beta_j >= sum_{i != j} beta_i, the
+// When one symplectic parameter dominates, beta_j >= sum_{i != j} beta_i, the
 // t = 0 moduli slice is empty for the y = 0 representative (mu_SU2 = 0 needs
 // sum_i x_i x_i^dagger to be a scalar matrix, which forces the tight-frame
 // inequality beta_i <= sum_{k != i} beta_k). The t -> 0+ limit of the genuine

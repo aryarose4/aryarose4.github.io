@@ -189,6 +189,7 @@ exclude:
   - bin/
   - mathematica/
   - dev/
+  - assets/tex/
   - CONTRIBUTING.md
   - CUSTOMIZE.md
   - AGENTS.md

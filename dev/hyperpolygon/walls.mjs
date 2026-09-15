@@ -977,165 +977,17 @@ console.log("[H] chamber lock focused checks (applyBetaDrag + chamberInterval)")
 }
 
 // ---------------------------------------------------------------------------
-// [S] scale buttons (uniform beta scaling): chambers are scale-invariant —
-// the wall inequalities are homogeneous in beta, so x0.8 / x-min(1.25, 1/max)
-// scaling never crosses a wall. Mirrors widget.js (2026-09-13 SUBTLE steps,
-// user request — the old x0.25 / up-to-x4 steps maxed weights out in one
-// click): down x0.8; up x1.25 clamped to 1/max, pinning the largest weight
-// exactly on 1 when the clamp fires (x*(1/x) can land 1 ulp off). Grey-out
-// rules: up disabled when max(beta) >= 1-1e-12; down when the post-scale max
-// would drop below 0.02 — the floor protects the chamber-interval DISPLAY,
-// whose allowed spans collapse against chamberInterval's hard WALL_MARGIN
-// 0-wall floor once the tuple scale approaches ~2*WALL_MARGIN (the solver
-// itself is scale-robust far below that).
-console.log("[S] scale buttons (uniform scaling never leaves the chamber)");
+// [S] uniform beta scaling. The widget's Scale Down/Up buttons are GONE
+// (user request 2026-09-15 — the four beta sliders alone drive the tuple),
+// so the button-mechanics batteries (a)-(c) are retired with them. What
+// remains is the solver-side fact they relied on: chambers are
+// scale-invariant (the wall inequalities are homogeneous in beta) and
+// solves stay clean at uniformly scaled tuples (widget-exact swapped call).
+console.log("[S] uniform beta scaling (solver scale-robustness)");
 {
   const DEF = [0.5, 0.5, 0.5, 0.25];
-  const SCALE_UP_FACTOR = 1.25; // widget.js constant
-  const SCALE_DOWN_FACTOR = 0.8; // widget.js constant
-  const SCALE_DOWN_MIN = 0.02; // widget.js constant
-  const shorts = shortSubsets(DEF);
-  const mx = (b) => Math.max(...b);
-  const minSpan = (b) => {
-    let m = Infinity;
-    for (let i = 0; i < 4; i++) {
-      const iv = chamberInterval(i, b, shorts);
-      if (iv.hi - iv.lo < m) m = iv.hi - iv.lo;
-    }
-    return m;
-  };
-  const chamberHolds = (b) => {
-    for (let i = 0; i < 4; i++) {
-      const iv = chamberInterval(i, b, shorts);
-      if (b[i] < iv.lo - 1e-12 || b[i] > iv.hi + 1e-12) return false;
-    }
-    return true;
-  };
-  const upDisabled = (b) => mx(b) >= 1 - 1e-12;
-  const downDisabled = (b) => mx(b) * SCALE_DOWN_FACTOR < SCALE_DOWN_MIN;
 
-  // (a) down-clicks from the defaults: each click is the widget's exact fp
-  // operation (beta[i] = beta[i] * 0.8), chamber holds, on-wall state
-  // unchanged, spans healthy while enabled. From the defaults 14 clicks are
-  // possible (0.5*0.8^14 ~= 0.02199 >= 0.02, 0.5*0.8^15 ~= 0.0176 < 0.02;
-  // fp noise is ~1e-17, the 0.02 boundary has ~2e-3 margin) and the deepest
-  // tuple keeps wide spans.
-  let beta = DEF.slice();
-  let clicks = 0;
-  for (let step = 1; step <= 20; step++) {
-    if (downDisabled(beta)) break;
-    const old = beta.slice();
-    for (let i = 0; i < 4; i++) beta[i] *= SCALE_DOWN_FACTOR;
-    clicks++;
-    for (let i = 0; i < 4; i++)
-      if (!(beta[i] === old[i] * SCALE_DOWN_FACTOR)) fail(`[S](a) scaling not the widget fp op at click ${step}`);
-    if (!chamberHolds(beta)) fail(`[S](a) scaled tuple left the chamber: ${fmtBeta(beta)}`);
-    if (breakingSubsets(beta, shorts).length !== 0)
-      fail(`[S](a) on-wall state appeared under scaling: ${fmtBeta(beta)}`);
-    if (mx(beta) < SCALE_DOWN_MIN) fail(`[S](a) post-scale max below the floor: ${fmtBeta(beta)}`);
-  }
-  if (clicks !== 14)
-    fail(`[S](a) expected exactly 14 down-clicks from the defaults before the floor, got ${clicks}`);
-  if (!(minSpan(beta) >= 2 * WALL_MARGIN))
-    fail(`[S](a) allowed spans collapsed at the deepest tuple ${fmtBeta(beta)}: min span ${minSpan(beta).toExponential(2)}`);
-  console.log(`  [S](a) down x${clicks}: ${fmtBeta(beta)}, disabled=${downDisabled(beta)}, min allowed span=${minSpan(beta).toExponential(2)}`);
-
-  // (b) up from the defaults: 1/max = 2 > 1.25, so the full subtle factor
-  // 1.25 applies and NOTHING is maxed out (the reported bug) — the button
-  // must stay enabled. 1.25 and its products are fp-exact here (powers of
-  // two times 5): (0.625, 0.625, 0.625, 0.3125).
-  {
-    const b = DEF.slice();
-    const f = Math.min(SCALE_UP_FACTOR, 1 / mx(b));
-    if (f !== SCALE_UP_FACTOR) fail(`[S](b) expected the full factor 1.25 from the defaults, got ${f}`);
-    const arg = b.indexOf(mx(b));
-    for (let i = 0; i < 4; i++) b[i] *= f;
-    if (JSON.stringify(b) !== JSON.stringify([0.625, 0.625, 0.625, 0.3125]))
-      fail(`[S](b) expected [0.625, 0.625, 0.625, 0.3125], got ${fmtBeta(b)}`);
-    if (b.some((v) => v > 1)) fail(`[S](b) a beta exceeded 1: ${fmtBeta(b)}`);
-    if (!chamberHolds(b)) fail(`[S](b) scaled-up tuple left the chamber: ${fmtBeta(b)}`);
-    if (breakingSubsets(b, shorts).length !== 0)
-      fail(`[S](b) on-wall state appeared under scaling: ${fmtBeta(b)}`);
-    if (upDisabled(b)) fail("[S](b) one subtle up-click must NOT disable the button");
-    console.log(`  [S](b) up x${f}: ${fmtBeta(b)}, still enabled=${!upDisabled(b)}`);
-  }
-
-  // (b2) repeated up-clicks walk max to 1 gradually: exactly 4 clicks from
-  // the defaults (0.5 -> 0.625 -> 0.78125 -> 0.9765625 -> clamped factor
-  // 1/0.9765625 with the pin), ending with max EXACTLY 1 and disabled.
-  {
-    const b = DEF.slice();
-    let ups = 0;
-    while (!upDisabled(b) && ups < 10) {
-      let m = 0;
-      let arg = 0;
-      for (let i = 0; i < 4; i++)
-        if (b[i] > m) {
-          m = b[i];
-          arg = i;
-        }
-      const f = Math.min(SCALE_UP_FACTOR, 1 / m);
-      for (let i = 0; i < 4; i++) b[i] *= f;
-      if (f === 1 / m) b[arg] = 1;
-      ups++;
-      if (b.some((v) => v > 1)) fail(`[S](b2) a beta exceeded 1 after ${ups} up-clicks: ${fmtBeta(b)}`);
-      if (!chamberHolds(b)) fail(`[S](b2) scaled-up tuple left the chamber after ${ups} clicks: ${fmtBeta(b)}`);
-      if (breakingSubsets(b, shorts).length !== 0)
-        fail(`[S](b2) on-wall state appeared under scaling: ${fmtBeta(b)}`);
-    }
-    if (ups !== 4) fail(`[S](b2) expected exactly 4 up-clicks from the defaults to reach max 1, got ${ups}`);
-    if (mx(b) !== 1) fail(`[S](b2) final max ${mx(b)} not exactly 1`);
-    if (!upDisabled(b)) fail("[S](b2) scale-up must be disabled at max 1");
-    console.log(`  [S](b2) up x${ups}: ${fmtBeta(b)}, max exactly 1, disabled=${upDisabled(b)}`);
-  }
-
-  // (b3) clamped factor from a tuple with max in [0.8, 1): the pin lands
-  // the largest weight exactly on 1; the tuple's OWN chamber is
-  // scale-invariant, so the pinned tuple must sit inside
-  // shortSubsets(testTuple) (NOT the defaults' chamber — this tuple lives
-  // in a different one). Non-dominant: 0.85 < 0.5+0.45+0.4.
-  {
-    const b = [0.85, 0.5, 0.45, 0.4];
-    const shortsB = shortSubsets(b);
-    const f = Math.min(SCALE_UP_FACTOR, 1 / mx(b));
-    if (!(f === 1 / mx(b) && f < SCALE_UP_FACTOR)) fail(`[S](b3) expected the clamped factor 1/max, got ${f}`);
-    const scaled = b.map((v) => v * f);
-    const arg = b.indexOf(mx(b));
-    scaled[arg] = 1;
-    if (scaled[arg] !== 1) fail("[S](b3) exact-1 pin failed");
-    if (scaled.some((v) => v > 1)) fail(`[S](b3) clamped scale exceeded 1: ${fmtBeta(scaled)}`);
-    let ok = true;
-    for (let i = 0; i < 4; i++) {
-      const iv = chamberInterval(i, scaled, shortsB);
-      if (scaled[i] < iv.lo - 1e-12 || scaled[i] > iv.hi + 1e-12) ok = false;
-    }
-    if (!ok) fail(`[S](b3) pinned scale left its own chamber: ${fmtBeta(scaled)}`);
-    if (breakingSubsets(scaled, shortsB).length !== 0)
-      fail(`[S](b3) on-wall state appeared under scaling: ${fmtBeta(scaled)}`);
-  }
-
-  // (b4) full-factor up from a small tuple (1/max > 1.25): nothing clamped
-  {
-    const b = [0.1, 0.1, 0.1, 0.05];
-    const f = Math.min(SCALE_UP_FACTOR, 1 / mx(b));
-    if (f !== SCALE_UP_FACTOR) fail(`[S](b4) expected the full factor 1.25, got ${f}`);
-    const scaled = b.map((v) => v * f);
-    if (JSON.stringify(scaled) !== JSON.stringify([0.125, 0.125, 0.125, 0.0625]))
-      fail(`[S](b4) expected [0.125, 0.125, 0.125, 0.0625], got ${fmtBeta(scaled)}`);
-    if (scaled.some((v) => v > 1)) fail(`[S](b4) factor-1.25 scale exceeded 1: ${fmtBeta(scaled)}`);
-    if (!chamberHolds(scaled)) fail(`[S](b4) factor-1.25 scale left the chamber: ${fmtBeta(scaled)}`);
-  }
-
-  // (c) grey-out rule spot checks
-  if (!upDisabled([1, 0.4, 0.3, 0.3])) fail("[S](c) scale-up must be disabled when a beta equals 1");
-  if (!upDisabled([0.999999999999, 0.4, 0.3, 0.3])) fail("[S](c) scale-up must be disabled near 1");
-  if (upDisabled([0.9, 0.4, 0.3, 0.3])) fail("[S](c) scale-up must be enabled below max 1");
-  if (!downDisabled([0.024, 0.02, 0.02, 0.01]))
-    fail("[S](c) scale-down must be disabled when the post-scale max would drop below 0.02");
-  if (downDisabled([0.026, 0.02, 0.02, 0.01]))
-    fail("[S](c) scale-down must be enabled when the post-scale max stays above 0.02");
-
-  // (d) solve health at uniformly scaled tuples (widget-exact swapped call)
+  // solve health at uniformly scaled tuples (widget-exact swapped call)
   for (const f of [1, 0.25, 0.0625, 0.015625, 1e-3, 1e-6]) {
     const b = DEF.map((v) => v * f);
     const res = solveSafe(0.5, 0, 0.5, [b[0], b[1], b[3], b[2]], true);
@@ -1146,20 +998,23 @@ console.log("[S] scale buttons (uniform scaling never leaves the chamber)");
     const su2 = su2NormOf(res.x, res.y);
     const u1 = muU1Error(res.x, res.y, b);
     if (!(su2 <= 1e-9 && u1 <= 1e-9))
-      fail(`[S](d) scaled-beta solve dirty at f=${f}: su2=${su2.toExponential(2)} muU1=${u1.toExponential(2)}`);
+      fail(`[S] scaled-beta solve dirty at f=${f}: su2=${su2.toExponential(2)} muU1=${u1.toExponential(2)}`);
   }
-  console.log("  [S](d) scaled-beta solves clean down to f=1e-6 (widget-exact call)");
+  console.log("  [S] scaled-beta solves clean down to f=1e-6 (widget-exact call)");
 }
 
 // ---------------------------------------------------------------------------
 // [W] cross-wall flop (the widget's "Cross Wall" button): flopping split k
 // replaces shorts[k] by its complement (the adjacent chamber across that
-// wall) and nudges beta across the wall into the new chamber. Mirrors
-// widget.js (nudgeAcross: grow the old short subset's legs by eps = 5% of
-// max(beta), bounded by the slider max 1; fall back to shrinking the
-// complement legs; halve eps while the candidate leaves the new chamber;
-// skip only in pinched corners). KNOWN, accepted per user instruction: after
-// crossing into a dominant chamber, small-t solves degrade — not asserted.
+// wall). Cases (a)-(f) exercise the NUDGE machinery (grow the old short
+// subset's legs by eps = 5% of max(beta), bounded by the slider max 1; fall
+// back to shrinking the complement legs; halve eps while the candidate
+// leaves the new chamber; skip only in pinched corners) — the widget no
+// longer runs it (spec 9, 2026-09-15: the tuple stays PINNED against the
+// crossed wall), so (a)-(f) now regression-test the chamber/interval math
+// the nudge was built on; case (g) mirrors the CURRENT pinned widget
+// behavior. KNOWN, accepted per user instruction: after crossing into a
+// dominant chamber, small-t solves degrade — not asserted.
 console.log("[W] cross-wall flop (chamber move + nudge + drag clamping)");
 {
   function complementOf(I) {
@@ -1392,6 +1247,29 @@ console.log("[W] cross-wall flop (chamber move + nudge + drag clamping)");
     if (st.beta.some((v) => v < 0 || v > 1))
       fail(`[W](f) nudge left the slider bounds: ${fmtBeta(st.beta)}`);
     console.log(`  [W](f) cross {0} with beta0 at 1: ${fmtBeta(st.beta)} (complement shrunk)`);
+  }
+
+  // (g) spec 9 (2026-09-15): the widget's Cross Wall no longer moves beta —
+  // the tuple stays pinned exactly against the crossed wall (which becomes
+  // the new chamber's boundary) and only the red boundary thresholds
+  // re-sync. Mirror: after the flop the beta tuple is UNCHANGED, still at
+  // equality (the flopped slot keeps breaking — crossing back stays
+  // available), and the tuple remains in the new chamber's closure.
+  {
+    const st = { beta: [0.25, 0.5, 0.5, 0.25], shorts: SHORTS0.slice() };
+    applyBetaDrag(0, st.beta, 0.24, st.shorts); // pins at the lo wall 0.25
+    const before = st.beta.slice();
+    const I = st.shorts[5];
+    st.shorts = st.shorts.slice();
+    st.shorts[5] = complementOf(I); // the widget's flop: shorts only
+    if (JSON.stringify(st.beta) !== JSON.stringify(before))
+      fail(`[W](g) pinned cross moved the tuple: ${fmtBeta(st.beta)}`);
+    const breaking = breakingSubsets(st.beta, st.shorts);
+    if (breaking.indexOf(st.shorts[5]) === -1)
+      fail(`[W](g) crossed wall no longer at equality: ${JSON.stringify(breaking)}`);
+    if (!inChamber(st.beta, st.shorts))
+      fail(`[W](g) pinned tuple outside the new chamber: ${fmtBeta(st.beta)}`);
+    console.log("  [W](g) spec 9 pin: tuple unchanged on the crossed wall, thresholds re-synced");
   }
 }
 

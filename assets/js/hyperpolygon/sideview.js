@@ -1,7 +1,7 @@
 // Side-view geometry for the hyperpolygon moduli space (task-list item 5):
 // the (r, theta, t) portrait as a central 2-sphere with three exterior
 // 2-spheres attached at the theta = 0 meridian points r = 0, 0.5, 1, plus
-// the "Higgs-flow" picture — a black dot that climbs off the central
+// the flow picture — a black dot that climbs off the central
 // sphere along the paraboloid normal direction as t grows (central
 // branch), or rides an exterior sphere from its attachment point toward
 // the antipode as t grows (exterior branch).
@@ -67,21 +67,22 @@ export const T_NEAR_INF = 0.9;
 // revolution with apex at the tip, axis = the attachment's outward normal,
 // focal length PARAB_FOCAL — the SAME focal length as the central-branch
 // paraboloids (user request 2026-09-15), so the higher strata are longer
-// paraboloids — but capped at PHI_CAP_STRAT < PHI_CAP so they stay narrower
-// than the central paraboloids (drawn radius f*tan(PHI_CAP_STRAT) vs
-// f*tan(PHI_CAP)). phi(t1) = atan(PHI_K_STRAT * t1/(1-t1)) capped at
-// PHI_CAP_STRAT drives the dot up the meridian. Visibility (the widget owns
-// entering; this is the data): the ghost fades in over t in
-// [T_PEEK_LO, T_PEEK_HI] (opacity -> STRAT_GHOST_OPACITY) while the dot nears
-// the tip, and the mesh turns highlight-white once the stratum branch is
-// active. Like the central paraboloids the meshes are grey/white (the
-// sphere palette): grey while the dot has not started climbing, white once
-// it has (makeSideView's loop).
+// paraboloids. User request 2026-09-15: the dot's climb phi(t1) =
+// atan(PHI_K_STRAT * t1/(1-t1)) saturates at the SAME PHI_CAP as the
+// central branch, so t1 -> 1 carries the dot all the way out to the drawn
+// paraboloid's rim (mesh radius f*tan(PHI_CAP)) instead of stopping
+// partway up.
+// Visibility (the widget owns entering; this is the data): the ghost fades
+// in over t in [T_PEEK_LO, T_PEEK_HI] (opacity at the unhighlighted state)
+// while the dot nears the tip, and the mesh turns highlight-white once the
+// stratum branch is active. Like the central paraboloids the meshes are
+// grey/white (the sphere palette): grey while the dot has not started
+// climbing, white once it has (makeSideView's loop).
 export const PHI_K_STRAT = 0.5;
-export const PHI_CAP_STRAT = (55 * Math.PI) / 180;
 export const T_PEEK_LO = 0.9;
 export const T_PEEK_HI = 0.97;
-export const STRAT_GHOST_OPACITY = 0.16;
+// The old stratum ghost opacity (STRAT_GHOST_OPACITY) is gone — the unified
+// two-state styling in makeSideView uses EXT_UNHI_OPACITY (2026-09-15).
 
 // Task 5 (2026-09-15): the central -> exterior flow transition. The central
 // branch captures toward a mapped attachment whenever (r, theta) sits
@@ -119,8 +120,11 @@ const Y_HAT = [0, 1, 0];
 // Attachment-point parallel-pair probe thresholds: a slot qualifies when
 // its pair sine is < PARALLEL_TOL and at least PARALLEL_RATIO times
 // smaller than the runner-up slot's (both chamber-short slots; the
-// measured margins are ~1e4 or better).
-const PARALLEL_TOL = 1e-3;
+// measured margins are ~1e4 or better). PARALLEL_TOL is EXPORTED and
+// shared with widget.js's polygon-view straight-pair highlight
+// (PAIR_SINE_TOL) so the two views cannot disagree about which pair is
+// straight.
+export const PARALLEL_TOL = 1e-3;
 const PARALLEL_RATIO = 10;
 // Retry theta when the theta = 0 solve is unusable: the documented
 // theta = 0 stall basin extends to at least 1e-8 but is clean by 1e-6,
@@ -262,13 +266,16 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
     // The I-stratum paraboloid frame at this attachment: apex at the tip
     // (antipode), axis n, meridian u = -w (the climb's arrival direction,
     // so the stratum flow continues the sphere climb smoothly at t1 = 0).
+    // The DRAWN geometry extends as far as the central paraboloids (mesh
+    // radius f*tan(PHI_CAP)); the dot's climb saturates at that same
+    // PHI_CAP (user request 2026-09-15), so t1 -> 1 reaches the drawn rim.
     const strat = {
       apex: add3(p, scale3(n, 2 * rk)),
       u: [-w[0], -w[1], -w[2]],
       v: cross3(n, [-w[0], -w[1], -w[2]]),
       n: n,
       f: PARAB_FOCAL,
-      cap: PHI_CAP_STRAT,
+      cap: PHI_CAP,
       rk: rk,
     };
     return { S: S, I: I, rk: rk, p: p, n: n, w: w, c: c, strat: strat };
@@ -287,9 +294,9 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
 
     if (stratumHere) {
       const t1 = Math.min(Math.max(stratumHere.t1, 0), 1);
-      let phi = t1 <= 0 ? 0 : t1 >= 1 ? PHI_CAP_STRAT : Math.atan((PHI_K_STRAT * t1) / (1 - t1));
-      if (phi > PHI_CAP_STRAT) phi = PHI_CAP_STRAT;
-      const rhoMax = fr.strat.f * Math.tan(PHI_CAP_STRAT);
+      let phi = t1 <= 0 ? 0 : t1 >= 1 ? PHI_CAP : Math.atan((PHI_K_STRAT * t1) / (1 - t1));
+      if (phi > PHI_CAP) phi = PHI_CAP;
+      const rhoMax = fr.strat.f * Math.tan(PHI_CAP);
       const climbStrat = (ph) => {
         const rho = Math.min(fr.strat.f * Math.tan(ph), rhoMax);
         const z = (rho * rho) / (2 * fr.strat.f);
@@ -304,6 +311,7 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
       return {
         kind: "stratum",
         slot: fr.S,
+        att: k,
         dot: climbStrat(phi),
         exterior: { center: fr.c, radius: fr.rk, normal: fr.n, side: fr.w, attachment: fr.p },
         paraboloid: null,
@@ -325,6 +333,7 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
     return {
       kind: "exterior",
       slot: fr.S,
+      att: k,
       dot: climb(Math.PI * t),
       exterior: { center: fr.c, radius: fr.rk, normal: fr.n, side: fr.w, attachment: fr.p },
       paraboloid: null,
@@ -539,7 +548,7 @@ function pairSine(edges, a, b) {
 //                grey/white — sphereGrey while not climbed, sphere once
 //                the dot climbs them
 //   arc        — guide-arc color (default 0x808080)
-//   border     — CSS color for the host border (default "#d0d0d0")
+  //   border     — CSS color for the host border (default "#cfd4da")
 //   caption    — reserved for future labels; accepted, currently unused
 export function makeSideView(host, opts) {
   if (typeof THREE === "undefined" || typeof THREE.OrbitControls === "undefined") return null;
@@ -556,7 +565,7 @@ export function makeSideView(host, opts) {
       extHi: p.extHi === undefined ? 0xffffff : p.extHi,
       dot: p.dot === undefined ? 0x000000 : p.dot,
       arc: p.arc === undefined ? 0x808080 : p.arc,
-      border: p.border === undefined ? "#d0d0d0" : p.border,
+      border: p.border === undefined ? "#cfd4da" : p.border,
       caption: p.caption === undefined ? "#666666" : p.caption,
     };
   };
@@ -588,10 +597,10 @@ export function makeSideView(host, opts) {
   sun.position.set(3, 5, 4);
   scene.add(sun);
 
-  // Central sphere: transparent in BOTH states (slight transparency when
-  // white, so a dot hidden on its backside stays faintly visible; glassy
-  // grey while the dot climbs an exterior sphere). depthWrite stays off so
-  // the opaque dot drawn underneath always shows through the blend.
+  // Central sphere: two states (spec 1) — highlighted (bright, opacity
+  // 0.92) while the dot is on the central branch, unhighlighted (0.32)
+  // once an exterior sphere or its stratum owns the dot. depthWrite stays
+  // off so the opaque dot drawn underneath always shows through the blend.
   const centralMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false });
   const central = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), centralMat);
   // initial guess until the widget's first update() supplies beta
@@ -599,17 +608,19 @@ export function makeSideView(host, opts) {
   central.scale.setScalar(0.25);
   scene.add(central);
 
-  // Shared unit-sphere geometry for the three exterior bubbles. White
-  // state is opacity 0.92 (not 1): the slight transparency lets the user
-  // tell when the black dot is hidden on a sphere's backside.
+  // Shared unit-sphere geometry for the three exterior bubbles. Two
+  // states only (spec 1): unhighlighted opacity 0.32 (slightly more
+  // opaque than the old 0.16 — spheres stay readable at all times), and
+  // highlighted 0.92 (the slight transparency still lets the user tell
+  // when the black dot is hidden on a sphere's backside).
   const extGeom = new THREE.SphereGeometry(1, 32, 24);
   const extHiCol = new THREE.Color(0xffffff); // palette-driven (applyColors)
-  const greyCol = new THREE.Color(0xb0b0b0); // palette-driven (applyColors)
   const sphereCol = new THREE.Color(0xffffff); // palette-driven (applyColors)
   const EXT_WHITE_OPACITY = 0.92;
+  const EXT_UNHI_OPACITY = 0.32;
   const exts = [];
   for (let k = 0; k < 3; k++) {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.16, depthWrite: false });
+    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: EXT_UNHI_OPACITY, depthWrite: false });
     const mesh = new THREE.Mesh(extGeom, mat);
     mesh.visible = false;
     scene.add(mesh);
@@ -647,10 +658,12 @@ export function makeSideView(host, opts) {
     scene.add(mesh);
     return { pos: pos, geom: geom, mesh: mesh };
   }
-  const paraMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b0, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false });
+  // Paraboloid materials (spec 1): the same two states as the spheres —
+  // unhighlighted 0.32 (grey base), highlighted 0.92 (sphere white).
+  const paraMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b0, transparent: true, opacity: EXT_UNHI_OPACITY, side: THREE.DoubleSide, depthWrite: false });
   const para = makeParaMesh(paraMat);
   const paraMesh = para.mesh;
-  // Stratum material: grey ghost -> sphere-white highlight (both
+  // Stratum material: grey unhighlighted -> sphere-white highlight (both
   // palette-driven, so light mode can adapt).
   const stratMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b0, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
   const strat = makeParaMesh(stratMat);
@@ -676,9 +689,10 @@ export function makeSideView(host, opts) {
   function lerp3(a, b, f) {
     return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
   }
-  // Central-sphere grey state: 1 while the dot climbs an exterior sphere
-  // (exterior branch with t > 0), 0 otherwise (white, slight transparency).
-  let centralGrey = 0;
+  // Central-sphere highlight state (spec 1): 1 while the dot is on the
+  // central branch (scaled down by the capture weight during the
+  // handover), 0 once an exterior sphere or stratum owns the dot.
+  let centralHi = 0;
   // Placement of every mapped exterior sphere, recomputed in update():
   // each attachment k with extMap[k] != null shows its sphere at
   // center p + rk * n with radius rk (pairRadius of the mapped slot's
@@ -695,7 +709,6 @@ export function makeSideView(host, opts) {
     paraMat.color.setHex(p.sphereGrey);
     arcMat.color.setHex(p.arc);
     extHiCol.setHex(p.extHi);
-    greyCol.setHex(p.sphereGrey);
     sphereCol.setHex(p.sphere);
     stratMat.color.setHex(p.sphereGrey);
     for (let k = 0; k < 3; k++) exts[k].mat.color.setHex(p.ext);
@@ -832,24 +845,21 @@ export function makeSideView(host, opts) {
     // reads it every frame so theme switches stay live)
     const p = pal();
 
-    // Exterior bubbles from the placement recomputed in update(); the
-    // attachment whose slot is the current flow branch glows to the white
-    // state (opacity 0.92 — slight transparency so a backside dot stays
-    // faintly visible) with an ~80 ms exponential lag. The branch slot
-    // lives at the TOP level of the flow state (st.slot); the exterior
-    // frame object carries no slot — reading lastState.exterior.slot here
-    // was always undefined, which is why the bubbles never highlighted
-    // (fixed 2026-09-13, user report). Task 5: a captured central branch
-    // (flowState's capture) raises the captured sphere's glow to the
-    // capture weight, so the sphere lights up smoothly while the dot
-    // blends onto it.
-    const activeSlot = lastState ? lastState.slot : null;
+    // Exterior bubbles from the placement recomputed in update(). Spec 1:
+    // the highlight tracks the ATTACHMENT INDEX the dot is on (flowState's
+    // `att`), not the short-pair slot — so entering one exterior sphere
+    // lights exactly that sphere even in chambers where several spheres
+    // share one slot. Task 5: a captured central branch (flowState's
+    // capture) raises the captured sphere's glow to the capture weight, so
+    // the sphere lights up smoothly while the dot blends onto it. Two
+    // states only: unhighlighted 0.32, highlighted 0.92 (~80 ms lag).
+    const activeAtt = lastState && Number.isInteger(lastState.att) ? lastState.att : -1;
     const capW = lastState && lastState.capture ? lastState.capture.w : 0;
     const capK = lastState && lastState.capture ? lastState.capture.k : -1;
     for (let k = 0; k < 3; k++) {
       const e = exts[k];
       const place = extPlacement[k];
-      const branchTarget = place !== null && activeSlot !== null && activeSlot === (lastExtMap ? lastExtMap[k] : null) ? 1 : 0;
+      const branchTarget = place !== null && k === activeAtt ? 1 : 0;
       const capTarget = place !== null && k === capK ? capW : 0;
       const target = Math.max(branchTarget, capTarget);
       e.glow += (target - e.glow) * (1 - Math.exp(-dt / 0.08));
@@ -857,7 +867,7 @@ export function makeSideView(host, opts) {
         e.mesh.visible = true;
         e.mesh.position.set(place.center[0], place.center[1], place.center[2]);
         e.mesh.scale.setScalar(place.radius);
-        e.mat.opacity = 0.16 + (EXT_WHITE_OPACITY - 0.16) * e.glow;
+        e.mat.opacity = EXT_UNHI_OPACITY + (EXT_WHITE_OPACITY - EXT_UNHI_OPACITY) * e.glow;
         e.mat.color.setHex(p.ext).lerp(extHiCol, e.glow);
       } else {
         e.mesh.visible = false;
@@ -865,15 +875,32 @@ export function makeSideView(host, opts) {
       }
     }
 
-    // Central sphere: grey/transparent while the dot climbs an exterior
-    // sphere (exterior branch, t > 0); white with slight transparency
-    // otherwise (central branch of any t, or an exterior sphere merely
-    // TOUCHED at t = 0). Same ~80 ms lag as the bubbles. The stratum branch
-    // keeps the grey state (the dot is off the central sphere).
-    const greyTarget = lastState && lastState.exterior && (lastT > 1e-9 || lastState.kind === "stratum") ? 1 : 0;
-    centralGrey += (greyTarget - centralGrey) * (1 - Math.exp(-dt / 0.08));
-    centralMat.color.setHex(p.sphere).lerp(greyCol, centralGrey);
-    centralMat.opacity = 0.92 + (0.3 - 0.92) * centralGrey;
+    // Central sphere: two states (spec 1). Highlighted while the dot is on
+    // the central branch (the capture weight scales the state for the
+    // handover onto an exterior sphere); unhighlighted — same 0.32 form as
+    // everything else — once an exterior sphere or its stratum owns the
+    // dot. Same ~80 ms lag as the bubbles.
+    let centralTarget = lastState && lastState.kind === "central" ? 1 - capW : 0;
+    // User request 2026-09-15: the attachment point is where the exterior
+    // sphere INTERSECTS the central sphere, so when the dot sits there both
+    // spheres highlight together. The exterior climb departs the central
+    // surface quadratically in t, so the co-highlight uses a tolerance band
+    // around the surface (smoothstep fade) instead of a bare t = 0 test.
+    // Every sphere-owning branch (exterior, stratum, captured central)
+    // carries stratum.rk — the exterior radius — to scale the band.
+    if (lastState && lastState.stratum && lastState.stratum.rk > 0) {
+      const tol = Math.max(0.02, 0.25 * lastState.stratum.rk);
+      const dC =
+        Math.hypot(dot.position.x, dot.position.y, dot.position.z) -
+        central.scale.x;
+      if (dC < tol) {
+        const f = Math.max(0, 1 - dC / tol);
+        centralTarget = Math.max(centralTarget, f * f * (3 - 2 * f));
+      }
+    }
+    centralHi += (centralTarget - centralHi) * (1 - Math.exp(-dt / 0.08));
+    centralMat.color.setHex(p.sphere);
+    centralMat.opacity = EXT_UNHI_OPACITY + (EXT_WHITE_OPACITY - EXT_UNHI_OPACITY) * centralHi;
 
     // I-stratum paraboloid: invisible until the dot nears the exterior
     // sphere's tip (ghost fade-in over [T_PEEK_LO, T_PEEK_HI]), highlight-
@@ -895,7 +922,7 @@ export function makeSideView(host, opts) {
           : (lastT - T_PEEK_LO) / (T_PEEK_HI - T_PEEK_LO);
       stratGhost = ramp * (lastState.capture ? capW : 1);
     }
-    const stratOp = STRAT_GHOST_OPACITY * stratGhost * (1 - stratGlow) + EXT_WHITE_OPACITY * stratGlow;
+    const stratOp = EXT_UNHI_OPACITY * stratGhost * (1 - stratGlow) + EXT_WHITE_OPACITY * stratGlow;
     if (lastState && lastState.stratum && stratOp > 0.004) {
       stratMesh.visible = true;
       stratMat.opacity = stratOp;
@@ -904,14 +931,16 @@ export function makeSideView(host, opts) {
       stratMesh.visible = false;
     }
 
-    // Central paraboloid (task 3): grey/white depending on whether the dot
-    // has started climbing it (t > 0), and faded by (1 - capture weight)
-    // so it hands over to the captured exterior sphere continuously.
+    // Central paraboloid (task 3 + spec 1): the same two states —
+    // unhighlighted (preview at t = 0) to highlighted (the dot climbing
+    // it), handed over by (1 - capture weight) to the captured exterior
+    // sphere continuously.
     const showPara = lastShowParab && lastState && lastState.paraboloid !== null;
     const paraClimbTarget = showPara && lastT > 1e-9 ? 1 : 0;
     paraClimb += (paraClimbTarget - paraClimb) * (1 - Math.exp(-dt / 0.08));
     paraMat.color.setHex(p.sphereGrey).lerp(sphereCol, paraClimb);
-    paraMat.opacity = 0.18 * (1 - capW);
+    paraMat.opacity =
+      (EXT_UNHI_OPACITY + (EXT_WHITE_OPACITY - EXT_UNHI_OPACITY) * paraClimb) * (1 - capW);
     paraMesh.visible = !!showPara;
     arcLine.visible = !!lastState && (lastState.kind === "exterior" || lastState.kind === "stratum" || !!showPara);
 
