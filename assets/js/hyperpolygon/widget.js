@@ -4,10 +4,9 @@
 import { makeHyperpolygon, stratumPair, PERMUTE_23, starSlots, cycleSlots } from "./solver.js";
 import { makeOrientor } from "./orientation.js";
 import { shortSubsets, chamberInterval, applyBetaDrag, breakingSubsets } from "./chambers.js";
-import { makeSideView, probeExteriorMap, attachmentRs, PERM } from "./sideview.js";
+import { makeSideView, probeExteriorMap, attachmentRs, PERM, CAP_NEAR_INF_W } from "./sideview.js";
 
 const T_SOLVE_MAX = 0.99;
-const T1_SOLVE_MAX = 0.99;
 
 const PALETTES = {
   light: {
@@ -26,7 +25,6 @@ const PALETTES = {
     sphereGrey: 0x93a5b8,
     ext: 0xb9c6d4,
     extHi: 0x8fa3ba,
-    parab: 0x4a7fd6,
     arc: 0x9aa4b2,
     sideBg: null,
   },
@@ -42,7 +40,6 @@ const PALETTES = {
     sphereGrey: 0xb0b0b0,
     ext: 0x9fb0c2,
     extHi: 0xffffff,
-    parab: 0x5a92e0,
     arc: 0x707c8a,
     sideBg: null,
   },
@@ -137,6 +134,22 @@ function ensureSliderStyles() {
     "}",
     "#hyperpolygon-widget .hp-slider:disabled {",
     "  opacity: 0.4;",
+    "}",
+    // section labels (2026-09-15): the Moduli Coordinates box header and
+    // the collapsible Parameters tab
+    "#hyperpolygon-widget .hp-sec-label {",
+    "  font-size: 0.8em;",
+    "  font-weight: 600;",
+    "  letter-spacing: 0.04em;",
+    "  color: var(--hp-box-tx);",
+    "  margin: 0 0 6px 2px;",
+    "}",
+    "#hyperpolygon-widget details.hp-params > summary {",
+    "  cursor: pointer;",
+    "  font-size: 0.9em;",
+    "  color: var(--hp-box-tx);",
+    "  margin-bottom: 4px;",
+    "  user-select: none;",
     "}",
     // chamber panel (task 2): the beta weights, scale buttons and chamber
     // inequalities live in one bordered box
@@ -284,12 +297,60 @@ function activate(container) {
     }
   }
   fillExtMap();
+
+  // Two-column layout (2026-09-15): left = the polygon view, its caption,
+  // the "Moduli Coordinates" slider section and the SL(2,C) view; right =
+  // the moduli-space side view and the collapsible "Parameters" tab with
+  // the beta/chamber panel. flex-wrap lets narrow containers stack.
+  const topFlex = document.createElement("div");
+  topFlex.style.display = "flex";
+  topFlex.style.flexWrap = "wrap";
+  topFlex.style.alignItems = "flex-start";
+  topFlex.style.gap = "14px";
+  container.appendChild(topFlex);
+  const leftCol = document.createElement("div");
+  leftCol.style.flex = "1 1 460px";
+  leftCol.style.minWidth = "300px";
+  topFlex.appendChild(leftCol);
+  const rightCol = document.createElement("div");
+  rightCol.style.flex = "1 1 320px";
+  rightCol.style.minWidth = "280px";
+  rightCol.style.maxWidth = "440px";
+  topFlex.appendChild(rightCol);
+
   const canvasBox = document.createElement("div");
   canvasBox.style.width = "100%";
   canvasBox.style.height = "420px";
   canvasBox.style.boxSizing = "border-box";
   canvasBox.style.position = "relative";
-  container.appendChild(canvasBox);
+  leftCol.appendChild(canvasBox);
+
+  const caption = document.createElement("div");
+  caption.style.marginTop = "6px";
+  caption.style.fontSize = "0.85em";
+  leftCol.appendChild(caption);
+
+  // Moduli Coordinates (2026-09-15): the four moduli sliders sectioned in
+  // one box — (r, theta) share the first row, (t, phi) the second. The
+  // sliders are appended into these rows further down (makeSlider).
+  const moduliBox = document.createElement("div");
+  moduliBox.className = "hp-panel";
+  leftCol.appendChild(moduliBox);
+  const moduliLabel = document.createElement("div");
+  moduliLabel.className = "hp-sec-label";
+  moduliLabel.textContent = "Moduli Coordinates";
+  moduliBox.appendChild(moduliLabel);
+  const modRowRT = document.createElement("div");
+  modRowRT.style.display = "flex";
+  modRowRT.style.flexWrap = "wrap";
+  modRowRT.style.gap = "6px 16px";
+  moduliBox.appendChild(modRowRT);
+  const modRowTG = document.createElement("div");
+  modRowTG.style.display = "flex";
+  modRowTG.style.flexWrap = "wrap";
+  modRowTG.style.gap = "6px 16px";
+  modRowTG.style.marginTop = "6px";
+  moduliBox.appendChild(modRowTG);
 
   // Top-right overlay (task 1): the chamber's three short pairs, one row
   // per exterior sphere (south/equator/north at r = 0 / 0.5 / 1), each
@@ -332,19 +393,30 @@ function activate(container) {
 
   // side view (task list #5): the (r, theta, t) moduli portrait — central
   // sphere + three exterior spheres + the flow dot; sideview.js owns the
-  // scene, this widget only feeds it slider state
+  // scene, this widget only feeds it slider state. It sits to the RIGHT of
+  // the polygon view (2026-09-15), above the Parameters tab.
   const sideBox = document.createElement("div");
   sideBox.style.width = "100%";
-  sideBox.style.height = "320px";
+  sideBox.style.height = "420px";
   sideBox.style.boxSizing = "border-box";
-  sideBox.style.marginTop = "10px";
-  container.appendChild(sideBox);
+  rightCol.appendChild(sideBox);
+
+  // Parameters tab (2026-09-15): the beta/chamber panel collapses under
+  // this <details> on the right side, below the moduli-space view.
+  const paramsDetails = document.createElement("details");
+  paramsDetails.className = "hp-params";
+  paramsDetails.open = true;
+  paramsDetails.style.marginTop = "10px";
+  const paramsSummary = document.createElement("summary");
+  paramsSummary.textContent = "Parameters";
+  paramsDetails.appendChild(paramsSummary);
+  rightCol.appendChild(paramsDetails);
 
   // SL(2,C) view (task 2): the real and imaginary parts of the traceless
   // central moment map polygon (mu_SL, 3 + 3 = 6 real dimensions), drawn
   // as two small three.js canvases. Collapsed by default; the summary
-  // toggles it. The U(1) phase gamma (the slider under t) rotates these
-  // polygons coordinatewise; the su(2) polygon is unaffected by gamma.
+  // toggles it. The U(1) phase phi (the slider under t) rotates these
+  // polygons coordinatewise; the su(2) polygon is unaffected by phi.
   const slDetails = document.createElement("details");
   slDetails.style.marginTop = "10px";
   const slSummary = document.createElement("summary");
@@ -358,7 +430,7 @@ function activate(container) {
   slRow.style.gap = "10px";
   slRow.style.marginTop = "8px";
   slDetails.appendChild(slRow);
-  container.appendChild(slDetails);
+  leftCol.appendChild(slDetails);
 
   const SL_SEG = 5; // 4 leg edges + the v4 -> v0 closing segment
   function makeSlView(tag) {
@@ -474,7 +546,7 @@ function activate(container) {
   // this writes the base data bit-exactly (cos 0 = 1, sin 0 = 0).
   function updateSlViews() {
     if (!sl2Base) return;
-    const g = parseFloat(gammaInput.value) * Math.PI;
+    const g = parseFloat(phiInput.value) * Math.PI;
     const c = Math.cos(g);
     const s = Math.sin(g);
     for (let vi = 0; vi < 2; vi++) {
@@ -504,22 +576,12 @@ function activate(container) {
   }
 
   // Chamber panel (task 2): the parabolic weights, their scale buttons and
-  // the chamber inequalities grouped in one bordered box.
+  // the chamber inequalities grouped in one bordered box — inside the
+  // collapsible Parameters tab on the right (2026-09-15).
   const panel = document.createElement("div");
   panel.className = "hp-panel";
-  container.appendChild(panel);
-
-  const controlsRow = document.createElement("div");
-  controlsRow.style.display = "flex";
-  controlsRow.style.flexWrap = "wrap";
-  controlsRow.style.gap = "16px";
-  controlsRow.style.marginTop = "10px";
-  container.appendChild(controlsRow);
-
-  const caption = document.createElement("div");
-  caption.style.marginTop = "6px";
-  caption.style.fontSize = "0.85em";
-  container.appendChild(caption);
+  panel.style.marginTop = "0";
+  paramsDetails.appendChild(panel);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -553,18 +615,46 @@ function activate(container) {
   const axesMat = new THREE.LineBasicMaterial({ color: 0xb0b0b0 });
   scene.add(new THREE.LineSegments(axesGeom, axesMat));
 
-  const posArr = new Float32Array(16 * 3);
-  const colArr = new Float32Array(16 * 3);
-  const polyGeom = new THREE.BufferGeometry();
-  polyGeom.setAttribute("position", new THREE.BufferAttribute(posArr, 3));
-  polyGeom.setAttribute("color", new THREE.BufferAttribute(colArr, 3));
-  const polyMat = new THREE.LineBasicMaterial({ vertexColors: true });
-
   // the polygon lives in its own group so the display orientation can be
   // re-aligned every frame without touching the world-fixed axes
   const polyGroup = new THREE.Group();
   scene.add(polyGroup);
-  polyGroup.add(new THREE.LineSegments(polyGeom, polyMat));
+
+  // Polygon edges (task 4, 2026-09-15): WebGL ignores LineBasicMaterial's
+  // linewidth, so thin GL lines can't be thickened — each of the 8
+  // segments is instead a unit cylinder mesh, scaled and oriented per
+  // frame. EDGE_RADIUS_REL * polygon-scale gives a slightly thicker stroke
+  // that always reads, at every polygon size.
+  const EDGE_RADIUS_REL = 0.007;
+  const edgeGeomUnit = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false);
+  const edgeMeshes = [];
+  const segBase = [];
+  for (let seg = 0; seg < 8; seg++) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const m = new THREE.Mesh(edgeGeomUnit, mat);
+    m.visible = false;
+    polyGroup.add(m);
+    edgeMeshes.push(m);
+    segBase.push(new THREE.Color(1, 1, 1));
+  }
+  const edgeUp = new THREE.Vector3(0, 1, 0);
+  const edgeDir = new THREE.Vector3();
+  function setSegment(seg, a, b, scale) {
+    const m = edgeMeshes[seg];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const dz = b[2] - a[2];
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-12) {
+      m.visible = false;
+      return;
+    }
+    m.visible = true;
+    m.position.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
+    m.scale.set(EDGE_RADIUS_REL * scale, len, EDGE_RADIUS_REL * scale);
+    edgeDir.set(dx / len, dy / len, dz / len);
+    m.quaternion.setFromUnitVectors(edgeUp, edgeDir);
+  }
 
   const markPos = new Float32Array(9 * 3);
   const markGeom = new THREE.BufferGeometry();
@@ -647,10 +737,10 @@ function activate(container) {
     }
     return -1;
   }
-  // per-frame yellow overrides on the segment color buffer (base colors
-  // were written by applyColors)
+  // per-frame yellow overrides on the edge materials (base colors were
+  // written into segBase by applyColors)
   function updateEdgeColors(now) {
-    let touched = false;
+    const fSeg = [0, 0, 0, 0, 0, 0, 0, 0];
     for (let p = 0; p < 6; p++) {
       let f = 0;
       if (legParallel[p]) {
@@ -660,22 +750,12 @@ function activate(container) {
         if (ph >= 0 && ph < 1) f = Math.sin(Math.PI * ph);
         else blinkPair = -1;
       }
-      if (f > 0) {
-        const a = LEG_PAIRS[p][0];
-        const b = LEG_PAIRS[p][1];
-        const segs = [2 * a, 2 * b];
-        for (let s = 0; s < 2; s++) {
-          for (let k = 0; k < 2; k++) {
-            const idx = (segs[s] * 2 + k) * 3;
-            colArr[idx] += (yellowCol.r - colArr[idx]) * f;
-            colArr[idx + 1] += (yellowCol.g - colArr[idx + 1]) * f;
-            colArr[idx + 2] += (yellowCol.b - colArr[idx + 2]) * f;
-          }
-        }
-        touched = true;
-      }
+      if (f > fSeg[2 * LEG_PAIRS[p][0]]) fSeg[2 * LEG_PAIRS[p][0]] = f;
+      if (f > fSeg[2 * LEG_PAIRS[p][1]]) fSeg[2 * LEG_PAIRS[p][1]] = f;
     }
-    if (touched) polyGeom.attributes.color.needsUpdate = true;
+    for (let s = 0; s < 8; s++) {
+      edgeMeshes[s].material.color.copy(segBase[s]).lerp(yellowCol, fSeg[s]);
+    }
   }
 
   const colA = new THREE.Color();
@@ -691,15 +771,8 @@ function activate(container) {
     yellowCol.setHex(pal.edgeYellow);
     grayCol.setHex(pal.markers);
     for (let seg = 0; seg < 8; seg++) {
-      const c = seg % 2 === 0 ? colA : colB;
-      for (let k = 0; k < 2; k++) {
-        const idx = (seg * 2 + k) * 3;
-        colArr[idx] = c.r;
-        colArr[idx + 1] = c.g;
-        colArr[idx + 2] = c.b;
-      }
+      segBase[seg].copy(seg % 2 === 0 ? colA : colB);
     }
-    polyGeom.attributes.color.needsUpdate = true;
     canvasBox.style.border = "1px solid " + pal.border;
     caption.style.color = pal.caption;
     betaHeader.style.color = pal.caption;
@@ -743,12 +816,13 @@ function activate(container) {
     let res = null;
     try {
       if (stratum) {
-        // I-stratum solve: the doubly-straight closed form at (t1, beta).
+        // I-stratum solve: the doubly-straight closed form at (t, beta) —
+        // the t slider IS the stratum parameter here (task 2, 2026-09-15).
         // The pair I is mapped through the same PERMUTE_23 pre-swap as the
         // pipeline path (solve indexing), and stratumPair's permute
         // argument applies the matching output swap so the displayed leg
         // j is user leg j under either flag setting.
-        const t1c = Math.min(Math.max(parseFloat(t1Input.value), 0), T1_SOLVE_MAX);
+        const t1c = Math.min(Math.max(parseFloat(tInput.value), 0), T_SOLVE_MAX);
         const ISolve = PERMUTE_23 ? stratum.I.map((u) => PERM[u]) : stratum.I;
         res = stratumPair(t1c, betaSolve, ISolve, PERMUTE_23);
       } else {
@@ -763,16 +837,11 @@ function activate(container) {
     }
     const pts = res.vertices;
     lastVerts = pts;
-    for (let seg = 0; seg < 8; seg++) {
-      for (let k = 0; k < 2; k++) {
-        const p = pts[seg + k];
-        const idx = (seg * 2 + k) * 3;
-        posArr[idx] = p[0];
-        posArr[idx + 1] = p[1];
-        posArr[idx + 2] = p[2];
-      }
-    }
-    polyGeom.attributes.position.needsUpdate = true;
+    const scale = Math.max.apply(
+      null,
+      pts.map((p) => Math.hypot(p[0], p[1], p[2]))
+    );
+    for (let seg = 0; seg < 8; seg++) setSegment(seg, pts[seg], pts[seg + 1], scale);
     for (let i = 0; i < 9; i++) {
       markPos[i * 3] = pts[i][0];
       markPos[i * 3 + 1] = pts[i][1];
@@ -787,10 +856,6 @@ function activate(container) {
     // parallelism fires one yellow blink; staying parallel (the straight
     // pair at an attachment snap) holds both v-sides solid yellow, and
     // the matching row in the top-right short-pair list highlights.
-    const scale = Math.max.apply(
-      null,
-      pts.map((p) => Math.hypot(p[0], p[1], p[2]))
-    );
     const dirs = [];
     for (let j = 0; j < 4; j++) {
       dirs.push([
@@ -877,8 +942,7 @@ function activate(container) {
         stratum.I.join(",") +
         "} ∥ {" +
         stratum.comp.join(",") +
-        "} · t\u2081 = " +
-        parseFloat(t1Input.value).toFixed(2);
+        "}";
     }
     if (
       !Number.isFinite(closure) ||
@@ -896,12 +960,13 @@ function activate(container) {
     pending = true;
   }
 
-  function makeSlider(label, min, max, step, value, format, snaps = [], noSolve = false) {
+  function makeSlider(label, min, max, step, value, format, snaps = [], noSolve = false, row = null) {
     const box = document.createElement("div");
     box.style.display = "flex";
     box.style.alignItems = "center";
     box.style.gap = "8px";
     box.style.flex = "1 1 220px";
+    box.style.minWidth = "200px";
     const lab = document.createElement("span");
     lab.textContent = label;
     const input = document.createElement("input");
@@ -931,89 +996,119 @@ function activate(container) {
         }
       }
       updateReadout();
-      // noSolve sliders (gamma) drive only display-side updates — they
+      // noSolve sliders (phi) drive only display-side updates — they
       // must never trigger a solver run (rescue paths can cost 100 ms)
       if (!noSolve) scheduleSolve();
     });
     box.appendChild(lab);
     box.appendChild(input);
     box.appendChild(readout);
-    controlsRow.appendChild(box);
+    (row || modRowRT).appendChild(box);
     return input;
   }
 
   const rInput = makeSlider("r", 0, 1, 0.005, 0.5, (v) => v.toFixed(3), [
     { value: 0.5, tol: 0.02 },
-  ]);
+  ], false, modRowRT);
   const thetaInput = makeSlider(
-    "θ",
+    "\u03b8",
     -1,
     1,
     0.005,
     0,
-    (v) => (v >= 1 ? "π" : v <= -1 ? "-π" : (v * Math.PI).toFixed(2)),
-    [{ value: 0, tol: 0.03 }]
-  );
-  const tInput = makeSlider("t", 0, 1, 0.01, 0, (v) =>
-    v >= 1 ? "t→∞" : (v / (1 - v)).toFixed(2)
-  );
-  // I-stratum mode (the "lim t→∞" click): while active, the r/θ/t sliders
-  // are parked and disabled at the attachment point, the solve comes from
-  // stratumPair (the doubly-straight closed form), and this t1 slider
-  // drives the stratum family: t1 = 0 is the tip slice (two nonzero y
-  // rows), growing t1 lifts the remaining rows (M = M0 (1 + t1/(1-t1))).
-  let stratum = null; // { k, S, I, comp } while active
-  let tBeforeStratum = 0.9;
-  const t1Input = makeSlider(
-    "t\u2081",
-    0,
-    1,
-    0.005,
-    0,
-    (v) => (v >= 1 ? "t\u2081\u2192\u221e" : (v / (1 - v)).toFixed(2)),
-    [{ value: 0, tol: 0.01 }]
-  );
-  t1Input.title =
-    "stratum parameter: t\u2081 = 0 is the tip slice (only the short pair's y rows nonzero); growing t\u2081 lifts the remaining rows";
-  t1Input.parentNode.style.display = "none";
-  // gamma (task 3): the U(1) phase e^{i·gamma} acting on y. Moment-map
-  // preserving; fixes the su(2) polygon (|y|^2 and y†y are phase-
-  // invariant), rotates the SL(2,C) polygons coordinatewise, and in the
-  // side view rotates the dot along the level circles of the exterior
-  // spheres / paraboloids. t = 0 points are fixed (attachment points and
-  // the apex are on the rotation axes), matching the moduli picture.
-  const gammaInput = makeSlider(
-    "γ",
-    -1,
-    1,
-    0.005,
-    0,
-    (v) => (v >= 1 ? "π" : v <= -1 ? "-π" : (v * Math.PI).toFixed(2)),
+    (v) => (v >= 1 ? "\u03c0" : v <= -1 ? "-\u03c0" : (v * Math.PI).toFixed(2)),
     [{ value: 0, tol: 0.03 }],
-    true
+    false,
+    modRowRT
   );
-  gammaInput.title =
-    "U(1) phase e^{i\u03b3} on y \u2014 rotates the SL(2,\u2102) polygons and the " +
+  // t is DUAL-PURPOSE (2026-09-15, task 2): on the central sphere it is the
+  // usual flow parameter (readout t/(1-t)); after the "lim t→∞" click it
+  // parameterizes the I-stratum (0 = the tip slice, growing t lifts the
+  // remaining rows) — entering the stratum jumps it to 0, leaving jumps it
+  // back to infinity (1; the readout shows ∞ and the button says the rest).
+  const tInput = makeSlider(
+    "t",
+    0,
+    1,
+    0.01,
+    0,
+    (v) => (v >= 1 ? "\u221e" : (v / (1 - v)).toFixed(2)),
+    [],
+    false,
+    modRowTG
+  );
+  tInput.title =
+    "flow parameter t (readout t/(1-t)); after lim t\u2192\u221e it drives the I-stratum (0 = tip slice)";
+  // stack the lim button BELOW the t slider (2026-09-15): wrap the slider
+  // row in a column and put the button under it
+  const tCol = document.createElement("div");
+  tCol.style.display = "flex";
+  tCol.style.flexDirection = "column";
+  tCol.style.gap = "3px";
+  tCol.style.flex = "1 1 220px";
+  tCol.style.minWidth = "200px";
+  modRowTG.insertBefore(tCol, tInput.parentNode);
+  tCol.appendChild(tInput.parentNode);
+  tInput.parentNode.style.flex = "1 1 auto";
+  // phi (the U(1) phase; renamed from gamma, 2026-09-15): e^{i·phi} acting
+  // on y. Moment-map preserving; fixes the su(2) polygon (|y|^2 and y†y
+  // are phase-invariant), rotates the SL(2,C) polygons coordinatewise, and
+  // in the side view rotates the dot along the level circles of the
+  // exterior spheres / paraboloids. t = 0 points are fixed (attachment
+  // points and the apex are on the rotation axes), matching the moduli
+  // picture.
+  const phiInput = makeSlider(
+    "\u03c6",
+    -1,
+    1,
+    0.005,
+    0,
+    (v) => (v >= 1 ? "\u03c0" : v <= -1 ? "-\u03c0" : (v * Math.PI).toFixed(2)),
+    [{ value: 0, tol: 0.03 }],
+    true,
+    modRowTG
+  );
+  phiInput.title =
+    "U(1) phase e^{i\u03c6} on y \u2014 rotates the SL(2,\u2102) polygons and the " +
     "side-view dot along level circles; t = 0 points are fixed";
-  gammaInput.addEventListener("input", () => {
+  phiInput.addEventListener("input", () => {
     updateSlViews();
     refreshSide();
   });
 
-  // "lim t→∞" (spec item 5, now implemented): while the dot is on an
-  // exterior sphere near the t -> infinity end (flowState.nearInfinity,
-  // t >= 0.9) the button enters the I-stratum of that sphere's short pair:
-  // the r/θ/t sliders park at the attachment, a t1 slider appears, the
-  // solve switches to stratumPair, and the side view draws the stratum
-  // paraboloid at the sphere's tip (highlight-white). Clicking again
-  // leaves (t restores to its pre-entry value).
+  // I-stratum mode (the "lim t→∞" click, task 2 rework 2026-09-15): while
+  // active, the r/θ sliders are parked and disabled at the attachment
+  // point, the SOLVE comes from stratumPair (the doubly-straight closed
+  // form), and the t slider itself drives the stratum family (the former
+  // t₁ slider is gone): t = 0 is the tip slice (only the short pair's y
+  // rows nonzero), growing t lifts the remaining rows (M = M0 (1 + t/(1-t))).
+  let stratum = null; // { k, S, I, comp } while active
+  let rBeforeStratum = null;
+  let thetaBeforeStratum = null;
+
+  // "lim t→∞": while the dot is on an exterior sphere near the t -> infinity
+  // end (flowState.nearInfinity — the exact exterior branch at t >= 0.9, or
+  // a captured central branch within CAP_NEAR_INF_W of the attachment) the
+  // button enters the I-stratum of that sphere's short pair: r/θ park at
+  // the attachment, the t slider jumps to 0 (the tip slice) and becomes the
+  // stratum parameter, the solve switches to stratumPair, and the side view
+  // draws the stratum paraboloid at the sphere's tip (highlight-white).
+  // Clicking again leaves: the t slider jumps back to infinity (1).
   const limBtn = document.createElement("button");
   limBtn.type = "button";
   limBtn.className = "hp-btn";
   limBtn.textContent = "lim t\u2192\u221e";
   limBtn.style.display = "none";
+  limBtn.style.alignSelf = "flex-start";
   limBtn.title = "enter the I-stratum (the tip of this exterior sphere)";
+  tCol.appendChild(limBtn);
+  // last flow state from the side view (refreshSide) — the captured
+  // central branch names its attachment for the stratum entry
+  let lastSideState = null;
   function attachmentIndexOfDot() {
+    if (lastSideState && lastSideState.capture && lastSideState.capture.w >= CAP_NEAR_INF_W) {
+      return lastSideState.capture.k;
+    }
     const r = parseFloat(rInput.value);
     const theta = parseFloat(thetaInput.value) * Math.PI;
     for (let k = 0; k < 3; k++) {
@@ -1031,16 +1126,24 @@ function activate(container) {
     const I = chamberShorts[S];
     if (!I || I.length !== 2) return;
     const comp = [0, 1, 2, 3].filter((n) => I.indexOf(n) === -1);
-    tBeforeStratum = parseFloat(tInput.value);
+    rBeforeStratum = parseFloat(rInput.value);
+    thetaBeforeStratum = k === 1 ? parseFloat(thetaInput.value) : null;
     stratum = { k: k, S: S, I: I, comp: comp };
     rInput.disabled = true;
     thetaInput.disabled = true;
-    tInput.disabled = true;
-    tInput.value = "1";
+    // park exactly on the attachment (the stratum branch gate) — the
+    // button can fire from inside the capture band, slightly off the point
+    // (the input dispatch keeps the readouts in sync with the parked
+    // values; the r/theta snaps are no-ops on the parked/restored numbers)
+    rInput.value = String(attachmentRs[k]);
+    rInput.dispatchEvent(new Event("input"));
+    if (k === 1) thetaInput.value = "0";
+    if (k === 1) thetaInput.dispatchEvent(new Event("input"));
+    // task 2: the t slider jumps to position 0 = the tip slice
+    tInput.value = "0";
     tInput.dispatchEvent(new Event("input"));
-    t1Input.parentNode.style.display = "";
     limBtn.textContent = "leave stratum";
-    limBtn.title = "leave the stratum (return to the exterior sphere)";
+    limBtn.title = "leave the stratum (t jumps back to infinity on the exterior sphere)";
     scheduleSolve();
     refreshSide();
   }
@@ -1048,11 +1151,16 @@ function activate(container) {
     stratum = null;
     rInput.disabled = false;
     thetaInput.disabled = false;
-    tInput.disabled = false;
-    t1Input.value = "0";
-    t1Input.dispatchEvent(new Event("input"));
-    t1Input.parentNode.style.display = "none";
-    tInput.value = String(Math.min(Math.max(tBeforeStratum, 0), 1));
+    if (rBeforeStratum !== null && Number.isFinite(rBeforeStratum)) {
+      rInput.value = String(rBeforeStratum);
+      rInput.dispatchEvent(new Event("input"));
+    }
+    if (thetaBeforeStratum !== null && Number.isFinite(thetaBeforeStratum)) {
+      thetaInput.value = String(thetaBeforeStratum);
+      thetaInput.dispatchEvent(new Event("input"));
+    }
+    // task 2: leaving jumps the t slider to infinity (1; readout ∞)
+    tInput.value = "1";
     tInput.dispatchEvent(new Event("input"));
     limBtn.textContent = "lim t\u2192\u221e";
     limBtn.title = "enter the I-stratum (the tip of this exterior sphere)";
@@ -1063,7 +1171,6 @@ function activate(container) {
     if (stratum) leaveStratum();
     else enterStratum();
   });
-  tInput.parentNode.appendChild(limBtn);
 
   // Side-view feed. Runs on the same cadence as the solve (pending block
   // in the loop) and immediately on t-slider hover (the paraboloid
@@ -1076,8 +1183,8 @@ function activate(container) {
     const r = parseFloat(rInput.value);
     const theta = parseFloat(thetaInput.value) * Math.PI;
     const t = parseFloat(tInput.value);
-    const gamma = parseFloat(gammaInput.value) * Math.PI;
-    const t1 = stratum ? parseFloat(t1Input.value) : 0;
+    const phi = parseFloat(phiInput.value) * Math.PI;
+    // in stratum mode the t slider IS the stratum parameter (task 2)
     const st = sideView.update(
       r,
       theta,
@@ -1086,9 +1193,10 @@ function activate(container) {
       chamberShorts,
       extMap,
       tHover || t > 0,
-      gamma,
-      stratum ? { k: stratum.k, t1: t1 } : null
+      phi,
+      stratum ? { k: stratum.k, t1: t } : null
     );
+    lastSideState = st;
     // the button shows near the t -> infinity end of an exterior sphere,
     // and STAYS while the stratum is active (it becomes "leave stratum")
     limBtn.style.display = st && (st.nearInfinity || stratum) ? "" : "none";

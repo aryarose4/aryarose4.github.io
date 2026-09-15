@@ -65,19 +65,42 @@ export const T_NEAR_INF = 0.9;
 // I-stratum paraboloid (the "lim t -> infinity" target, kissed by the active
 // exterior sphere at its tip/antipode). The surface is a paraboloid of
 // revolution with apex at the tip, axis = the attachment's outward normal,
-// focal length STRATUM_FOCAL_REL * rk (proportional to the sphere radius, so
-// it stays "very shallow" at every beta). phi(t1) = atan(PHI_K_STRAT *
-// t1/(1-t1)) capped at PHI_CAP_STRAT drives the dot up the meridian.
-// Visibility (the widget owns entering; this is the data): the ghost fades in
-// over t in [T_PEEK_LO, T_PEEK_HI] (opacity -> STRAT_GHOST_OPACITY) while the
-// dot nears the tip, and the mesh turns highlight-white once the stratum
-// branch is active.
-export const STRATUM_FOCAL_REL = 0.35;
+// focal length PARAB_FOCAL — the SAME focal length as the central-branch
+// paraboloids (user request 2026-09-15), so the higher strata are longer
+// paraboloids — but capped at PHI_CAP_STRAT < PHI_CAP so they stay narrower
+// than the central paraboloids (drawn radius f*tan(PHI_CAP_STRAT) vs
+// f*tan(PHI_CAP)). phi(t1) = atan(PHI_K_STRAT * t1/(1-t1)) capped at
+// PHI_CAP_STRAT drives the dot up the meridian. Visibility (the widget owns
+// entering; this is the data): the ghost fades in over t in
+// [T_PEEK_LO, T_PEEK_HI] (opacity -> STRAT_GHOST_OPACITY) while the dot nears
+// the tip, and the mesh turns highlight-white once the stratum branch is
+// active. Like the central paraboloids the meshes are grey/white (the
+// sphere palette): grey while the dot has not started climbing, white once
+// it has (makeSideView's loop).
 export const PHI_K_STRAT = 0.5;
 export const PHI_CAP_STRAT = (55 * Math.PI) / 180;
 export const T_PEEK_LO = 0.9;
 export const T_PEEK_HI = 0.97;
 export const STRAT_GHOST_OPACITY = 0.16;
+
+// Task 5 (2026-09-15): the central -> exterior flow transition. The central
+// branch captures toward a mapped attachment whenever (r, theta) sits
+// within the capture band of it: poles measure |r - 0| / |r - 1| against
+// CAP_BAND_R (theta is degenerate there), the equator measures
+// max(|r - 0.5|/CAP_BAND_R, |theta|/CAP_BAND_TH). The bands are tuned to
+// the widget's snaps (r snaps to 0.5 within +-0.02, theta to 0 within
+// ~0.094 rad), so the pre-snap state is already mostly captured and the
+// snap lands smoothly. The capture weight is a smoothstep from 0 (band
+// edge) to just under 1 (the attachment itself, where the exact exterior
+// branch takes over); the dot and guide arc blend continuously from the
+// central paraboloid climb onto the exterior-sphere meridian — shifted to
+// start at the CURRENT (r, theta) sphere point, so the t = 0 dot marker
+// never moves — making entering an exterior sphere a smooth glide instead
+// of a branch jump. CAP_NEAR_INF_W: capture weights above this count as
+// "on the sphere" for the lim t -> infinity affordance.
+export const CAP_BAND_R = 0.1;
+export const CAP_BAND_TH = 0.3;
+export const CAP_NEAR_INF_W = 0.5;
 
 // Widget solve permutation, exported for the harness/spec. NOTE (measured,
 // and the walls.mjs [E] regression): under the PERMUTE_23 = true pattern the
@@ -188,10 +211,15 @@ function tangentFrame(p) {
 // gamma = 0 is a bit-exact no-op (cos 0 = 1, sin 0 = 0, guarded).
 // stratum (optional, default null) = { k, t1 }: the widget's stratum mode.
 // When non-null and the attachment geometry validates, the STRATUM branch
-// is returned: the dot rides the shallow paraboloid kissing the exterior
+// is returned: the dot rides the stratum paraboloid kissing the exterior
 // sphere's tip (antipode), positioned by t1 along the meridian and gamma
 // around it. The exterior branch ALSO carries the stratum frame (field
 // `stratum`) so the side view can draw the ghost paraboloid near the tip.
+// Off the attachments the CENTRAL branch runs; within the capture band
+// (CAP_BAND_R / CAP_BAND_TH) of a mapped attachment it carries a
+// `capture` = { k, S, w, attachment } (task 5): the dot/arc blend
+// continuously onto that sphere's meridian with weight w, and the
+// captured sphere's stratum frame rides along for the ghost.
 // Returns null on any non-finite input; never throws for finite input.
 export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, stratum) {
   if (!Number.isFinite(r) || !Number.isFinite(theta) || !Number.isFinite(t)) return null;
@@ -204,19 +232,15 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
   const R = centralRadius(beta);
 
   const ARC_N = 33;
-  for (let k = 0; k < 3; k++) {
+  // Shared exterior-sphere frame builder for attachment k (used by the
+  // exact exterior branch below and by the central branch's capture
+  // blend; identical formulas, so both paths keep the pre-refactor
+  // bit-exact values the batteries assert).
+  function attachFrame(k) {
     const S = extMap ? extMap[k] : null;
-    if (S === null || S === undefined) continue;
-    const onR = Math.abs(r - attachmentRs[k]) <= 1e-9;
-    const onTheta = k === 1 ? Math.abs(theta) <= 1e-9 : true;
-    if (!onR || !onTheta) continue;
-    // stratum mode (widget parks r/theta/t at the attachment, so the same
-    // on-attachment gate applies): { k, t1 } selects this sphere's stratum
-    const stratumHere =
-      stratum && stratum.k === k && Number.isFinite(stratum.t1) ? stratum : null;
-
+    if (S === null || S === undefined) return null;
     const I = chamberShorts ? chamberShorts[S] : null;
-    if (!I || I.length !== 2) continue;
+    if (!I || I.length !== 2) return null;
     let rk = pairRadius(beta, I);
     if (!(rk >= 1e-9)) rk = 1e-9;
     const p = spherePoint(attachmentRs[k], 0, R);
@@ -235,7 +259,6 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
       w = [cg * w[0] + sg * ax[0], cg * w[1] + sg * ax[1], cg * w[2] + sg * ax[2]];
     }
     const c = add3(p, scale3(n, rk));
-
     // The I-stratum paraboloid frame at this attachment: apex at the tip
     // (antipode), axis n, meridian u = -w (the climb's arrival direction,
     // so the stratum flow continues the sphere climb smoothly at t1 = 0).
@@ -244,34 +267,48 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
       u: [-w[0], -w[1], -w[2]],
       v: cross3(n, [-w[0], -w[1], -w[2]]),
       n: n,
-      f: STRATUM_FOCAL_REL * rk,
+      f: PARAB_FOCAL,
       cap: PHI_CAP_STRAT,
       rk: rk,
     };
+    return { S: S, I: I, rk: rk, p: p, n: n, w: w, c: c, strat: strat };
+  }
+
+  for (let k = 0; k < 3; k++) {
+    const onR = Math.abs(r - attachmentRs[k]) <= 1e-9;
+    const onTheta = k === 1 ? Math.abs(theta) <= 1e-9 : true;
+    if (!onR || !onTheta) continue;
+    const fr = attachFrame(k);
+    if (!fr) continue;
+    // stratum mode (widget parks r/theta/t at the attachment, so the same
+    // on-attachment gate applies): { k, t1 } selects this sphere's stratum
+    const stratumHere =
+      stratum && stratum.k === k && Number.isFinite(stratum.t1) ? stratum : null;
 
     if (stratumHere) {
       const t1 = Math.min(Math.max(stratumHere.t1, 0), 1);
       let phi = t1 <= 0 ? 0 : t1 >= 1 ? PHI_CAP_STRAT : Math.atan((PHI_K_STRAT * t1) / (1 - t1));
       if (phi > PHI_CAP_STRAT) phi = PHI_CAP_STRAT;
-      const rhoMax = strat.f * Math.tan(PHI_CAP_STRAT);
+      const rhoMax = fr.strat.f * Math.tan(PHI_CAP_STRAT);
       const climbStrat = (ph) => {
-        const rho = Math.min(strat.f * Math.tan(ph), rhoMax);
-        const z = (rho * rho) / (2 * strat.f);
+        const rho = Math.min(fr.strat.f * Math.tan(ph), rhoMax);
+        const z = (rho * rho) / (2 * fr.strat.f);
         return [
-          strat.apex[0] + rho * strat.u[0] + z * n[0],
-          strat.apex[1] + rho * strat.u[1] + z * n[1],
-          strat.apex[2] + rho * strat.u[2] + z * n[2],
+          fr.strat.apex[0] + rho * fr.strat.u[0] + z * fr.n[0],
+          fr.strat.apex[1] + rho * fr.strat.u[1] + z * fr.n[1],
+          fr.strat.apex[2] + rho * fr.strat.u[2] + z * fr.n[2],
         ];
       };
       const arc = [];
       for (let i = 0; i < ARC_N; i++) arc.push(climbStrat((phi * i) / (ARC_N - 1)));
       return {
         kind: "stratum",
-        slot: S,
+        slot: fr.S,
         dot: climbStrat(phi),
-        exterior: { center: c, radius: rk, normal: n, side: w, attachment: p },
+        exterior: { center: fr.c, radius: fr.rk, normal: fr.n, side: fr.w, attachment: fr.p },
         paraboloid: null,
-        stratum: strat,
+        stratum: fr.strat,
+        capture: null,
         arc: arc,
         nearInfinity: true,
         t1: t1,
@@ -281,17 +318,18 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
     const climb = (alpha) => {
       const ca = Math.cos(alpha);
       const sa = Math.sin(alpha);
-      return [c[0] + rk * (-ca * n[0] + sa * w[0]), c[1] + rk * (-ca * n[1] + sa * w[1]), c[2] + rk * (-ca * n[2] + sa * w[2])];
+      return [fr.c[0] + fr.rk * (-ca * fr.n[0] + sa * fr.w[0]), fr.c[1] + fr.rk * (-ca * fr.n[1] + sa * fr.w[1]), fr.c[2] + fr.rk * (-ca * fr.n[2] + sa * fr.w[2])];
     };
     const arc = [];
     for (let i = 0; i < ARC_N; i++) arc.push(climb((Math.PI * i) / (ARC_N - 1)));
     return {
       kind: "exterior",
-      slot: S,
+      slot: fr.S,
       dot: climb(Math.PI * t),
-      exterior: { center: c, radius: rk, normal: n, side: w, attachment: p },
+      exterior: { center: fr.c, radius: fr.rk, normal: fr.n, side: fr.w, attachment: fr.p },
       paraboloid: null,
-      stratum: strat,
+      stratum: fr.strat,
+      capture: null,
       arc: arc,
       nearInfinity: t >= T_NEAR_INF,
     };
@@ -325,6 +363,53 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
   };
   const arc = [];
   for (let i = 0; i < ARC_N; i++) arc.push(climb((phi * i) / (ARC_N - 1)));
+
+  // Task 5: capture toward a mapped attachment within the capture band —
+  // the flow hands over to that exterior sphere continuously (a smoothstep
+  // blend of the dot and the guide arc from the central paraboloid climb
+  // onto the sphere's meridian), instead of switching branches at the
+  // attachment. Poles measure |r - attachment| against CAP_BAND_R (theta
+  // is degenerate there); the equator measures max(|r - 0.5|/CAP_BAND_R,
+  // |theta|/CAP_BAND_TH). The exterior climb is SHIFTED to start at the
+  // current sphere point p (not the attachment), so at t = 0 the captured
+  // dot is exactly p — the capture never displaces the t = 0 marker — and
+  // as (r, theta) -> the attachment the shift vanishes and the exact
+  // exterior branch takes over.
+  let cap = null;
+  for (let k = 0; k < 3; k++) {
+    const ar = attachmentRs[k];
+    const d = k === 1 ? Math.max(Math.abs(r - ar) / CAP_BAND_R, Math.abs(theta) / CAP_BAND_TH) : Math.abs(r - ar) / CAP_BAND_R;
+    if (!(d < 1)) continue;
+    const fr = attachFrame(k);
+    if (!fr) continue;
+    const x = 1 - d;
+    const wgt = x * x * (3 - 2 * x);
+    if (cap !== null && wgt <= cap.w) continue;
+    const shift = sub3(p, fr.p);
+    const climbExt = (alpha) => {
+      const ca = Math.cos(alpha);
+      const sa = Math.sin(alpha);
+      return [fr.c[0] + fr.rk * (-ca * fr.n[0] + sa * fr.w[0]), fr.c[1] + fr.rk * (-ca * fr.n[1] + sa * fr.w[1]), fr.c[2] + fr.rk * (-ca * fr.n[2] + sa * fr.w[2])];
+    };
+    const extArc = [];
+    for (let i = 0; i < ARC_N; i++) extArc.push(add3(climbExt((Math.PI * i) / (ARC_N - 1)), shift));
+    cap = { k: k, S: fr.S, w: wgt, attachment: fr.p, dot: add3(climbExt(Math.PI * t), shift), arc: extArc, strat: fr.strat };
+  }
+  if (cap) {
+    const wt = cap.w;
+    const lp = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+    return {
+      kind: "central",
+      slot: null,
+      dot: lp(climb(phi), cap.dot, wt),
+      exterior: null,
+      paraboloid: { apex: p, u: u, v: v, n: n, f: PARAB_FOCAL, cap: PHI_CAP },
+      stratum: cap.strat,
+      capture: { k: cap.k, S: cap.S, w: wt, attachment: cap.attachment },
+      arc: arc.map((q, i) => lp(q, cap.arc[i], wt)),
+      nearInfinity: wt >= CAP_NEAR_INF_W && t >= T_NEAR_INF,
+    };
+  }
   return {
     kind: "central",
     slot: null,
@@ -332,6 +417,7 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
     exterior: null,
     paraboloid: { apex: p, u: u, v: v, n: n, f: PARAB_FOCAL, cap: PHI_CAP },
     stratum: null,
+    capture: null,
     arc: arc,
     nearInfinity: false,
   };
@@ -449,7 +535,9 @@ function pairSine(edges, a, b) {
 //   extHi      — highlighted (active) exterior sphere / stratum color
 //                (default 0xffffff)
 //   dot        — black dot color (default 0x000000)
-//   parab      — paraboloid color (default 0x3a7bd5)
+//   parab      — REMOVED 2026-09-15 (task 3): both paraboloids are now
+//                grey/white — sphereGrey while not climbed, sphere once
+//                the dot climbs them
 //   arc        — guide-arc color (default 0x808080)
 //   border     — CSS color for the host border (default "#d0d0d0")
 //   caption    — reserved for future labels; accepted, currently unused
@@ -467,7 +555,6 @@ export function makeSideView(host, opts) {
       ext: p.ext === undefined ? 0xffffff : p.ext,
       extHi: p.extHi === undefined ? 0xffffff : p.extHi,
       dot: p.dot === undefined ? 0x000000 : p.dot,
-      parab: p.parab === undefined ? 0x3a7bd5 : p.parab,
       arc: p.arc === undefined ? 0x808080 : p.arc,
       border: p.border === undefined ? "#d0d0d0" : p.border,
       caption: p.caption === undefined ? "#666666" : p.caption,
@@ -518,6 +605,7 @@ export function makeSideView(host, opts) {
   const extGeom = new THREE.SphereGeometry(1, 32, 24);
   const extHiCol = new THREE.Color(0xffffff); // palette-driven (applyColors)
   const greyCol = new THREE.Color(0xb0b0b0); // palette-driven (applyColors)
+  const sphereCol = new THREE.Color(0xffffff); // palette-driven (applyColors)
   const EXT_WHITE_OPACITY = 0.92;
   const exts = [];
   for (let k = 0; k < 3; k++) {
@@ -536,6 +624,9 @@ export function makeSideView(host, opts) {
   // frame whenever visible (28 angular x 14 radial grid). One mesh for the
   // central branch's hover/t paraboloid, one for the I-stratum paraboloid
   // at the active exterior sphere's tip.
+  // Paraboloid materials: grey/white like the spheres (task 3, 2026-09-15)
+  // — grey while the dot has not started climbing, the sphere "white" once
+  // it has (both palette-driven so light mode adapts).
   const PARA_A = 28;
   const PARA_R = 14;
   function makeParaMesh(mat) {
@@ -556,13 +647,12 @@ export function makeSideView(host, opts) {
     scene.add(mesh);
     return { pos: pos, geom: geom, mesh: mesh };
   }
-  const paraMat = new THREE.MeshLambertMaterial({ color: 0x3a7bd5, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false });
+  const paraMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b0, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false });
   const para = makeParaMesh(paraMat);
   const paraMesh = para.mesh;
-  // Stratum material: ghost = the exterior-sphere tint at low opacity,
-  // highlight = the active exterior color at the white opacity (both
+  // Stratum material: grey ghost -> sphere-white highlight (both
   // palette-driven, so light mode can adapt).
-  const stratMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+  const stratMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b0, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
   const strat = makeParaMesh(stratMat);
   const stratMesh = strat.mesh;
   let stratGlow = 0;
@@ -578,6 +668,14 @@ export function makeSideView(host, opts) {
   let lastShowParab = false;
   let lastT = 0;
   let hovered = false;
+  // Central-paraboloid grey/white ramp (task 3): 1 once the dot has
+  // started climbing it (t > 0), 0 while it has not.
+  let paraClimb = 0;
+  // Camera-pan target helpers (task 6).
+  const ORIGIN = [0, 0, 0];
+  function lerp3(a, b, f) {
+    return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  }
   // Central-sphere grey state: 1 while the dot climbs an exterior sphere
   // (exterior branch with t > 0), 0 otherwise (white, slight transparency).
   let centralGrey = 0;
@@ -594,11 +692,12 @@ export function makeSideView(host, opts) {
     const p = pal();
     centralMat.color.setHex(p.sphere);
     dotMat.color.setHex(p.dot);
-    paraMat.color.setHex(p.parab);
+    paraMat.color.setHex(p.sphereGrey);
     arcMat.color.setHex(p.arc);
     extHiCol.setHex(p.extHi);
     greyCol.setHex(p.sphereGrey);
-    stratMat.color.setHex(p.ext);
+    sphereCol.setHex(p.sphere);
+    stratMat.color.setHex(p.sphereGrey);
     for (let k = 0; k < 3; k++) exts[k].mat.color.setHex(p.ext);
     if (p.sideBg === null) renderer.setClearColor(0x000000, 0);
     else renderer.setClearColor(p.sideBg, 1);
@@ -729,6 +828,9 @@ export function makeSideView(host, opts) {
     let dt = (now - lastFrame) / 1000;
     lastFrame = now;
     if (dt > 0.05) dt = 0.05;
+    // one palette read per frame (pal() builds a fresh object; the loop
+    // reads it every frame so theme switches stay live)
+    const p = pal();
 
     // Exterior bubbles from the placement recomputed in update(); the
     // attachment whose slot is the current flow branch glows to the white
@@ -737,19 +839,26 @@ export function makeSideView(host, opts) {
     // lives at the TOP level of the flow state (st.slot); the exterior
     // frame object carries no slot — reading lastState.exterior.slot here
     // was always undefined, which is why the bubbles never highlighted
-    // (fixed 2026-09-13, user report).
+    // (fixed 2026-09-13, user report). Task 5: a captured central branch
+    // (flowState's capture) raises the captured sphere's glow to the
+    // capture weight, so the sphere lights up smoothly while the dot
+    // blends onto it.
     const activeSlot = lastState ? lastState.slot : null;
+    const capW = lastState && lastState.capture ? lastState.capture.w : 0;
+    const capK = lastState && lastState.capture ? lastState.capture.k : -1;
     for (let k = 0; k < 3; k++) {
       const e = exts[k];
       const place = extPlacement[k];
-      const target = place !== null && activeSlot !== null && activeSlot === (lastExtMap ? lastExtMap[k] : null) ? 1 : 0;
+      const branchTarget = place !== null && activeSlot !== null && activeSlot === (lastExtMap ? lastExtMap[k] : null) ? 1 : 0;
+      const capTarget = place !== null && k === capK ? capW : 0;
+      const target = Math.max(branchTarget, capTarget);
       e.glow += (target - e.glow) * (1 - Math.exp(-dt / 0.08));
       if (place) {
         e.mesh.visible = true;
         e.mesh.position.set(place.center[0], place.center[1], place.center[2]);
         e.mesh.scale.setScalar(place.radius);
         e.mat.opacity = 0.16 + (EXT_WHITE_OPACITY - 0.16) * e.glow;
-        e.mat.color.setHex(pal().ext).lerp(extHiCol, e.glow);
+        e.mat.color.setHex(p.ext).lerp(extHiCol, e.glow);
       } else {
         e.mesh.visible = false;
         e.glow = 0;
@@ -763,36 +872,80 @@ export function makeSideView(host, opts) {
     // keeps the grey state (the dot is off the central sphere).
     const greyTarget = lastState && lastState.exterior && (lastT > 1e-9 || lastState.kind === "stratum") ? 1 : 0;
     centralGrey += (greyTarget - centralGrey) * (1 - Math.exp(-dt / 0.08));
-    centralMat.color.setHex(pal().sphere).lerp(greyCol, centralGrey);
+    centralMat.color.setHex(p.sphere).lerp(greyCol, centralGrey);
     centralMat.opacity = 0.92 + (0.3 - 0.92) * centralGrey;
 
     // I-stratum paraboloid: invisible until the dot nears the exterior
     // sphere's tip (ghost fade-in over [T_PEEK_LO, T_PEEK_HI]), highlight-
     // white once the stratum branch is active (widget's lim t->infinity
-    // click). Same ~80 ms lag for the highlight.
+    // click). Same ~80 ms lag for the highlight. Task 5: a captured
+    // central branch scales the ghost by the capture weight, so the tip
+    // paraboloid fades in with the sphere capture rather than at the
+    // exact branch switch. Task 3: grey/white — the mesh lerps from
+    // sphereGrey (not climbed) to the sphere white with stratGlow.
     const stratGlowTarget = lastState && lastState.kind === "stratum" ? 1 : 0;
     stratGlow += (stratGlowTarget - stratGlow) * (1 - Math.exp(-dt / 0.08));
     let stratGhost = 0;
-    if (lastState && lastState.kind === "exterior" && lastState.stratum) {
-      stratGhost =
+    if (lastState && lastState.stratum && (lastState.kind === "exterior" || lastState.capture)) {
+      const ramp =
         lastT <= T_PEEK_LO
           ? 0
           : lastT >= T_PEEK_HI
           ? 1
           : (lastT - T_PEEK_LO) / (T_PEEK_HI - T_PEEK_LO);
+      stratGhost = ramp * (lastState.capture ? capW : 1);
     }
     const stratOp = STRAT_GHOST_OPACITY * stratGhost * (1 - stratGlow) + EXT_WHITE_OPACITY * stratGlow;
     if (lastState && lastState.stratum && stratOp > 0.004) {
       stratMesh.visible = true;
       stratMat.opacity = stratOp;
-      stratMat.color.setHex(pal().ext).lerp(extHiCol, stratGlow);
+      stratMat.color.setHex(p.sphereGrey).lerp(sphereCol, stratGlow);
     } else {
       stratMesh.visible = false;
     }
 
+    // Central paraboloid (task 3): grey/white depending on whether the dot
+    // has started climbing it (t > 0), and faded by (1 - capture weight)
+    // so it hands over to the captured exterior sphere continuously.
     const showPara = lastShowParab && lastState && lastState.paraboloid !== null;
+    const paraClimbTarget = showPara && lastT > 1e-9 ? 1 : 0;
+    paraClimb += (paraClimbTarget - paraClimb) * (1 - Math.exp(-dt / 0.08));
+    paraMat.color.setHex(p.sphereGrey).lerp(sphereCol, paraClimb);
+    paraMat.opacity = 0.18 * (1 - capW);
     paraMesh.visible = !!showPara;
     arcLine.visible = !!lastState && (lastState.kind === "exterior" || lastState.kind === "stratum" || !!showPara);
+
+    // Task 6: camera pan. The resting target is the origin (central
+    // sphere center); while an exterior sphere is highlighted the target
+    // glides to its intersection with the central sphere (the attachment
+    // point), and while the stratum is highlighted it glides on to the
+    // stratum paraboloid's tangency point at the sphere's tip (the
+    // apex). Leaving reverses (stratum -> attachment -> origin) through
+    // the same smoothed glow weights. Both controls.target and the
+    // camera position move by the same delta, so the orbit orientation
+    // is preserved (a pan, not a rotation).
+    let tgt = null;
+    if (lastState) {
+      if (lastState.kind === "stratum" && lastState.stratum && lastState.exterior) {
+        tgt = lerp3(lastState.exterior.attachment, lastState.stratum.apex, stratGlow);
+      } else if (lastState.kind === "exterior" && lastState.exterior) {
+        tgt = lastState.exterior.attachment;
+      } else if (lastState.capture) {
+        tgt = lerp3(ORIGIN, lastState.capture.attachment, capW);
+      }
+    }
+    if (tgt) {
+      const pf = 1 - Math.exp(-dt / 0.3);
+      const dx = (tgt[0] - controls.target.x) * pf;
+      const dy = (tgt[1] - controls.target.y) * pf;
+      const dz = (tgt[2] - controls.target.z) * pf;
+      controls.target.x += dx;
+      controls.target.y += dy;
+      controls.target.z += dz;
+      camera.position.x += dx;
+      camera.position.y += dy;
+      camera.position.z += dz;
+    }
 
     controls.update();
     renderer.render(scene, camera);

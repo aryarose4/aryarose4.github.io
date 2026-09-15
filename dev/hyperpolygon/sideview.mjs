@@ -31,6 +31,10 @@
 //        periodic, paraboloid constraint z = rho^2/(2f) and rho
 //        preserved, apex fixed, rotated frames orthonormal
 //   [I]  purity: repeated flowState calls are bit-identical
+//   [STR] I-stratum branch: tip paraboloid frame (focal = PARAB_FOCAL per
+//        task 3), dot placement, gamma level circles
+//   [C]  capture blend: the central branch hands over to a mapped
+//        exterior sphere continuously within the capture band (task 5)
 import { shortSubsets, chamberInterval } from "./chambers.js";
 import { PERMUTE_23, starSlots, cycleSlots } from "./solver.js";
 import {
@@ -38,7 +42,9 @@ import {
   PARAB_FOCAL,
   PHI_CAP,
   T_NEAR_INF,
-  STRATUM_FOCAL_REL,
+  CAP_BAND_R,
+  CAP_BAND_TH,
+  CAP_NEAR_INF_W,
   T_PEEK_LO,
   T_PEEK_HI,
   PERM,
@@ -584,7 +590,7 @@ console.log("[STR] stratum branch (tip paraboloid frames, dot placement, gamma)"
     const apexExpect = add3(p, scale3(n, 2 * rk));
     ok(len3(sub3(fr.apex, apexExpect)) < 1e-12, `[STR] k=${k}: apex != attachment + 2 rk n`);
     ok(Math.abs(len3(sub3(fr.apex, ext.exterior.center)) - rk) < 1e-12, `[STR] k=${k}: tip not on the exterior sphere`);
-    ok(Math.abs(fr.f - STRATUM_FOCAL_REL * rk) < 1e-15, `[STR] k=${k}: focal != STRATUM_FOCAL_REL * rk`);
+    ok(fr.f === PARAB_FOCAL, `[STR] k=${k}: focal != PARAB_FOCAL (task 3: the strata share the central paraboloids' focal length)`);
     ok(Math.abs(dot3(fr.u, fr.n)) < 1e-12 && Math.abs(len3(fr.u) - 1) < 1e-12, `[STR] k=${k}: meridian u not unit-tangent`);
     ok(Math.abs(dot3(cross3(fr.u, fr.v), fr.n) - 1) < 1e-12, `[STR] k=${k}: (u, v, n) not right-handed orthonormal`);
     // stratum branch: t1 = 0 dot at the apex; t1 > 0 on the paraboloid
@@ -628,6 +634,119 @@ console.log("[STR] stratum branch (tip paraboloid frames, dot placement, gamma)"
   // ghost opacity thresholds are widget/loop-side; the data side is T_PEEK_*
   ok(T_PEEK_LO < T_PEEK_HI && T_PEEK_LO >= T_NEAR_INF, "[STR] ghost window inconsistent with T_NEAR_INF");
   console.log("  stratum frames + gamma invariants OK over the three attachments");
+}
+
+// ---------------------------------------------------------------------------
+// [C] capture blend (task 5, 2026-09-15): within the capture band of a
+// mapped attachment the central branch hands over to that exterior sphere
+// continuously — the dot/arc blend from the paraboloid climb onto the
+// (shifted) sphere meridian with weight w -> 1 at the attachment, where
+// the exact exterior branch takes over. No capture outside the band;
+// nearInfinity flips on (w >= CAP_NEAR_INF_W, t >= T_NEAR_INF); the t = 0
+// dot marker never moves (the captured climb is shifted to start at the
+// current (r, theta) sphere point).
+console.log("[C] capture blend (continuity into the exterior spheres)");
+{
+  const beta = [0.5, 0.5, 0.5, 0.25];
+  const shorts = shortSubsets(beta);
+  const probe = probeExteriorMap(beta, shorts);
+  const extMap = probe.map;
+  const R = centralRadius(beta);
+  ok(extMap.every((s) => s !== null), "[C] probe map has null slots (capture test needs all three spheres)");
+  const TS = [0, 0.25, 0.5, 0.9, 1];
+  // (r, theta) at normalized band distance d of attachment k, on the
+  // inner side (the outer side of the poles would leave [0,1]). The
+  // equator has two flavors: off along theta and off along r.
+  const DS = [1e-7, 0.1, 0.3, 0.5, 0.7, 0.98];
+  const flavors = [];
+  for (let k = 0; k < 3; k++) {
+    if (k === 1) {
+      flavors.push({ k: k, at: (d) => [0.5, d * CAP_BAND_TH], step: (0.005 * Math.PI) / CAP_BAND_TH });
+      flavors.push({ k: k, at: (d) => [0.5 + d * CAP_BAND_R, 0], step: 0.005 / CAP_BAND_R });
+    } else {
+      flavors.push({ k: k, at: (d) => [k === 0 ? d * CAP_BAND_R : 1 - d * CAP_BAND_R, k === 0 ? 0.7 : -0.7], step: 0.005 / CAP_BAND_R });
+    }
+  }
+  let worstEdge = 0; // dot delta across the exact branch switch
+  let worstStep = 0; // dot delta between adjacent in-band slider states
+  let worstEndW = 0; // capture weight at the band edge (must be ~0)
+  let checked = 0;
+  for (const fl of flavors) {
+    const k = fl.k;
+    const S = extMap[k];
+    const ar = attachmentRs[k];
+    const I = shorts[S];
+    const rk = pairRadius(beta, I);
+    const pAtt = spherePoint(ar, 0, R);
+    for (const t of TS) {
+      // outside the band: no capture, no stratum frame
+      const outP = fl.at(1.05);
+      const stOut = flowState(outP[0], outP[1], t, beta, shorts, extMap);
+      ok(stOut !== null && stOut.kind === "central" && stOut.capture === null && stOut.stratum === null && stOut.nearInfinity === false, `[C] k=${k} t=${t}: outside-band state wrong`);
+      let prevW = Infinity;
+      for (const d of DS) {
+        const pt = fl.at(d);
+        const st = flowState(pt[0], pt[1], t, beta, shorts, extMap);
+        if (!ok(st !== null && st.kind === "central" && st.capture !== null, `[C] k=${k} d=${d} t=${t}: capture missing`)) continue;
+        checked++;
+        const c = st.capture;
+        ok(c.k === k && c.S === S, `[C] k=${k} d=${d}: capture k/S wrong (${c.k}/${c.S})`);
+        ok(c.w > 0 && c.w < 1, `[C] k=${k} d=${d}: weight ${c.w} out of (0,1)`);
+        ok(c.w < prevW, `[C] k=${k} d=${d}: weight not decreasing in d (${c.w} after ${prevW})`);
+        prevW = c.w;
+        if (d >= 0.98) worstEndW = Math.max(worstEndW, c.w);
+        ok(st.stratum !== null && st.paraboloid !== null, `[C] k=${k} d=${d}: captured branch must carry both frames`);
+        const mdAtt = Math.max(Math.abs(c.attachment[0] - pAtt[0]), Math.abs(c.attachment[1] - pAtt[1]), Math.abs(c.attachment[2] - pAtt[2]));
+        ok(mdAtt <= 1e-15, `[C] k=${k}: capture attachment off (${mdAtt.toExponential(2)})`);
+        if (st.stratum) {
+          const n = st.stratum.n;
+          const apexExpect = [pAtt[0] + 2 * rk * n[0], pAtt[1] + 2 * rk * n[1], pAtt[2] + 2 * rk * n[2]];
+          const md = Math.max(Math.abs(st.stratum.apex[0] - apexExpect[0]), Math.abs(st.stratum.apex[1] - apexExpect[1]), Math.abs(st.stratum.apex[2] - apexExpect[2]));
+          ok(md < 1e-12, `[C] k=${k} d=${d}: captured stratum apex off (${md.toExponential(2)})`);
+        }
+        ok(st.arc.length === 33 && st.arc.every((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]) && Number.isFinite(q[2])), `[C] k=${k} d=${d}: arc broken`);
+        // nearInfinity flips on the (w >= CAP_NEAR_INF_W, t >= T_NEAR_INF) rule
+        const expectNear = c.w >= CAP_NEAR_INF_W && t >= T_NEAR_INF;
+        ok(st.nearInfinity === expectNear, `[C] k=${k} d=${d} t=${t}: nearInfinity ${st.nearInfinity} != ${expectNear}`);
+        // adjacent-state continuity: one slider step (0.005 in r, 0.005*pi
+        // in theta) moves the dot by only a small fraction of the branch
+        // separation (smoothstep slope <= 1.5, so dw <= 1.5*step/BAND)
+        const dNext = d + fl.step;
+        if (dNext < 1) {
+          const pn = fl.at(dNext);
+          const sn = flowState(pn[0], pn[1], t, beta, shorts, extMap);
+          if (sn && sn.capture) {
+            const step = Math.max(Math.abs(st.dot[0] - sn.dot[0]), Math.abs(st.dot[1] - sn.dot[1]), Math.abs(st.dot[2] - sn.dot[2]));
+            if (step > worstStep) worstStep = step;
+            ok(step <= 0.25, `[C] k=${k} d=${d} t=${t}: dot jumps between adjacent states (${step.toFixed(4)})`);
+          }
+        }
+        // continuity across the exact branch switch: at d = 1e-7 the
+        // captured dot sits on the exact exterior branch's dot
+        if (d === 1e-7) {
+          const stEx = flowState(ar, 0, t, beta, shorts, extMap);
+          if (ok(stEx !== null && stEx.kind === "exterior", `[C] k=${k}: exact attachment not exterior`)) {
+            const edge = Math.max(Math.abs(st.dot[0] - stEx.dot[0]), Math.abs(st.dot[1] - stEx.dot[1]), Math.abs(st.dot[2] - stEx.dot[2]));
+            if (edge > worstEdge) worstEdge = edge;
+            ok(edge <= 1e-6, `[C] k=${k} t=${t}: dot discontinuous at the branch switch (${edge.toExponential(2)})`);
+          }
+        }
+      }
+    }
+    // the t = 0 captured dot IS the (r, theta) marker, exactly
+    for (const d of [1e-7, 0.3, 0.7]) {
+      const pt = fl.at(d);
+      const st0 = flowState(pt[0], pt[1], 0, beta, shorts, extMap);
+      if (st0 && st0.capture) {
+        const p0 = spherePoint(pt[0], pt[1], R);
+        const dd = Math.max(Math.abs(st0.dot[0] - p0[0]), Math.abs(st0.dot[1] - p0[1]), Math.abs(st0.dot[2] - p0[2]));
+        ok(dd <= 1e-12, `[C] k=${k} d=${d}: t=0 captured dot moved off the (r,theta) point (${dd.toExponential(2)})`);
+      }
+    }
+  }
+  ok(checked >= 4 * TS.length * 4, `[C] too few captured states checked (${checked})`);
+  ok(worstEndW <= 0.01, `[C] capture weight at the band edge not ~0 (${worstEndW.toExponential(2)})`);
+  console.log(`  worst branch-switch delta ${worstEdge.toExponential(2)}, worst adjacent-state delta ${worstStep.toFixed(4)}, band-edge weight ${worstEndW.toExponential(2)}`);
 }
 
 

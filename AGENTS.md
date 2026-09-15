@@ -760,9 +760,9 @@ as documentation of the permuted pattern's canceling double swap).
   gained a trailing `stratum` argument (null | {k, t1}): when non-null and
   the (r, theta) sliders sit ON attachment k (the widget parks them there
   in stratum mode), the STRATUM branch is returned (kind "stratum"): the
-  dot rides the shallow paraboloid kissing the sphere's tip
-  (apex = attachment + 2 rk n, axis n, focal = STRATUM_FOCAL_REL·rk = 0.35
-  rk, phi(t1) = atan(PHI_K_STRAT·t1/(1-t1)) capped PHI_CAP_STRAT = 55 deg;
+  dot rides the stratum paraboloid kissing the sphere's tip
+  (apex = attachment + 2 rk n, axis n; phi(t1) = atan(PHI_K_STRAT·t1/(1-t1))
+  capped PHI_CAP_STRAT = 55 deg;
   meridian u = -w so the flow continues the climb's arrival direction).
   The exterior branch ALSO carries the frame (field `stratum`) for the
   ghost. Highlight semantics (the loop): the stratum mesh is INVISIBLE
@@ -778,8 +778,56 @@ as documentation of the permuted pattern's canceling double swap).
   renders invisible-on-white. Battery: sideview.mjs [STR] (frame
   orthonormality, apex/2rk identity, dot-on-paraboloid + z = rho^2/2f,
   t1=0 dot == apex exactly, gamma level-circle invariants + 2pi
-  periodicity, central branch carries stratum = null); sideview.mjs is now
-  4555 checks.
+  periodicity, central branch carries stratum = null).
+  STRATUM FOCAL + GREY/WHITE PARABOLOIDS (2026-09-15, UI task 3): the
+  stratum paraboloid's focal length is now PARAB_FOCAL — the SAME focal
+  length as the central-sphere paraboloids (was STRATUM_FOCAL_REL·rk;
+  the STRATUM_FOCAL_REL constant is REMOVED) — with the cap still
+  PHI_CAP_STRAT = 55 deg, so each stratum is a LONGER but still clearly
+  NARROWER paraboloid than the central ones (drawn radius
+  f·tan(55 deg) = 0.143 vs f·tan(80 deg) = 0.567; ~16x the old length at
+  the default beta). BOTH paraboloid meshes are now grey/white instead of
+  blue (palette keys sphereGrey -> sphere, lerped with an ~80 ms lag):
+  the central paraboloid turns white once the dot has started climbing it
+  (t > 0; ramp `paraClimb`), the stratum mesh lerps grey->white with
+  stratGlow; the `parab` palette key is gone (widget palettes updated).
+  Battery [STR]'s focal assertion updated (f === PARAB_FOCAL).
+  CAPTURE BLEND (2026-09-15, UI task 5 — "the transitions into the
+  exterior spheres need the same treatment" as the interior chambers):
+  flowState's central branch now CARRIES a capture — within the capture
+  band of a mapped attachment k (poles measure |r - att| against
+  CAP_BAND_R = 0.1, theta degenerate there; the equator measures
+  max(|r - 0.5|/CAP_BAND_R, |theta|/CAP_BAND_TH) with CAP_BAND_TH = 0.3)
+  it returns `capture` = { k, S, w, attachment } and blends the dot AND
+  the guide arc pointwise from the central paraboloid climb onto that
+  sphere's meridian with smoothstep weight w (0 at the band edge, -> 1 at
+  the attachment, where the exact exterior branch takes over) — entering
+  an exterior sphere is a smooth glide instead of a branch jump. The
+  exterior climb is SHIFTED to start at the current (r, theta) sphere
+  point (shift = p - p_attachment), so at t = 0 the captured dot is
+  EXACTLY the slider marker (fp <= 2 ulp; battery-asserted) and the
+  capture never displaces the t = 0 portrait. The bands are tuned to the
+  widget's snaps (r snaps to 0.5 within +-0.02, theta to 0 within ~0.094
+  rad), so the pre-snap state is already mostly captured. The captured
+  state also carries the sphere's stratum frame (ghost scales by w) and
+  nearInfinity = (w >= CAP_NEAR_INF_W = 0.5 && t >= T_NEAR_INF), which is
+  what shows the lim t->infinity button slightly off the attachment;
+  the widget's attachmentIndexOfDot prefers the measured capture. At most
+  one attachment can be in band. All battery-exact branches (exterior,
+  stratum, uncaptured central) are bit-identical to before (attachFrame
+  is a pure refactor); sideview.mjs gained the [C] capture battery
+  (continuity across the branch switch <= 1e-6, adjacent-slider-state dot
+  delta <= 0.25, band-edge weight ~0, t=0 marker exactness, nearInfinity
+  rule) — sideview.mjs is now 5810 checks.
+  CAMERA PAN (2026-09-15, UI task 6): the side view's camera target
+  glides (both controls.target and camera.position move by the same
+  exponential delta, tau 0.3 s — a pan, orbit orientation preserved) to
+  center what is highlighted: the resting target is the origin; an
+  exterior sphere's glow (branch slot OR capture weight) centers its
+  attachment point (its intersection with the central sphere); the
+  stratum branch centers the tip (lerp attachment -> tip by the smoothed
+  stratGlow); leaving reverses through the same smoothed weights
+  (stratum -> attachment -> origin).
 - `assets/js/hyperpolygon/widget.js` — display-layer additions
   (2026-09-14, tasks 1/2/3, user-approved same day: "Most of that looks
   good"). NO solver changes
@@ -845,12 +893,44 @@ as documentation of the permuted pattern's canceling double swap).
   "leave stratum" (click again = leave: t1 -> 0, t restored, sliders
   re-enabled), Cross Wall leaves the stratum first, and the caption
   gains " · I-stratum {a,b} ∥ {c,d} · t₁ = ...". The polygon in stratum
-  mode is the doubly-straight stick; the yellow-edge + pair-list logic
-  lights BOTH pairs automatically. (2) the beta controls (betaHeader,
-  betaRow, scaleRow, chamberRow) moved into a bordered `.hp-panel` box
-  ("the chamber stuff in a panel", task 2). (3) light-mode side-view
-  palette (task 3): PALETTES gained sphere/sphereGrey/extHi keys (see
-  the sideview.js entry).
+   mode is the doubly-straight stick; the yellow-edge + pair-list logic
+   lights BOTH pairs automatically. (2) the beta controls (betaHeader,
+   betaRow, scaleRow, chamberRow) moved into a bordered `.hp-panel` box
+   ("the chamber stuff in a panel", task 2). (3) light-mode side-view
+   palette (task 3): PALETTES gained sphere/sphereGrey/extHi keys (see
+   the sideview.js entry).
+  TWO-COLUMN LAYOUT + t-STRATUM + THICK EDGES (2026-09-15, user tasks
+  1/2/4 of the six-task UI call; pending user visual check). (1) LAYOUT:
+  the widget is a flex two-column row — LEFT: the polygon canvas (with
+  the pair list overlay), the caption, a "Moduli Coordinates" panel
+  holding the four moduli sliders in two rows ((r, theta) then (t, phi)),
+  and the SL(2,C) details; RIGHT: the moduli-space side view (420 px)
+  above a collapsible <details> tab labelled "Parameters" (open by
+  default) containing the beta/chamber panel. The gamma slider is renamed
+  phi ("φ", same shape/step/snaps/noSolve — only the label/title/var name
+  changed; updateSlViews/refreshSide read phiInput). (2) t-STRATUM: the
+  t₁ slider is REMOVED — the t slider parameterizes the stratum while
+  stratum mode is active: entering (lim t→∞ click) jumps t to 0 (the tip
+  slice) and parks/disables r/θ at the attachment (r parked to the exact
+  attachment value and restored on exit; at the equator theta is also
+  parked to 0 and restored, since the stratum branch gate needs the exact
+  point; the button can now fire from inside the capture band via
+  attachmentIndexOfDot's measured-capture preference, so the parking is
+  not a no-op), leaving jumps t to 1 (= infinity; readout "∞" instead of
+  the old "t→∞" text — the button says it). The solve clamp is the shared
+  T_SOLVE_MAX = 0.99 (T1_SOLVE_MAX is gone). The lim button lives BELOW
+  the t slider (the t slider row is wrapped in a flex column tCol with
+  the button under it) instead of to the right. Caption's "· t₁ = ..."
+  part dropped (the I-stratum tag remains). (3) THICK EDGES: the polygon
+  edges are 8 unit-cylinder meshes (WebGL ignores LineBasicMaterial
+  linewidth), scaled/oriented per solve by setSegment with radius
+  EDGE_RADIUS_REL = 0.007 * polygon scale, colored per segment from
+  segBase (applyColors) with the yellow straight/blink overrides applied
+  per frame in updateEdgeColors (material colors, no color buffer); the
+  SL(2,C) views keep thin lines. No solver changes — full suite green:
+  sweep unchanged, walls/edge/locus/exterior/stratum/star/cycle/orient/
+  validate PASS unchanged, sideview PASS 5810 checks (see the sideview.js
+  entry for the [C] capture battery and the camera pan).
 - `mathematica/` — reference notebooks and legacy data. Excluded from
   the Jekyll build; `mathematica/hyperpolygonData*` is gitignored
   (137 MB file, over GitHub's limit). `generateHyperpolygonData.wls`
@@ -1245,8 +1325,40 @@ Tracked work items from the user's planning call; keep statuses updated.
     star/cycle PASS, validate legacy diffs unchanged, new stratum.mjs
     1877 checks PASS.
 
+16. DONE (2026-09-15, six-task UI call, pending user visual check):
+    layout + stratum t-slider + paraboloid colors + thick edges +
+    exterior-sphere capture + camera pan — see the widget.js and
+    sideview.js Files entries ("TWO-COLUMN LAYOUT + t-STRATUM + THICK
+    EDGES", "STRATUM FOCAL + GREY/WHITE PARABOLOIDS", "CAPTURE BLEND",
+    "CAMERA PAN"): (1) two-column layout, beta/chamber panel under a
+    collapsible "Parameters" tab on the right, side view right of the
+    polygon view, (r,theta)/(t,phi) rows under a "Moduli Coordinates"
+    section; (2) the t slider dual-purposes as the stratum parameter
+    (t1 slider gone; enter -> t=0, leave -> t=1, lim button below the
+    slider); (3) strata share PARAB_FOCAL and are grey/white like the
+    central paraboloids (STRATUM_FOCAL_REL removed); (4) polygon edges
+    are cylinders (EDGE_RADIUS_REL 0.007); (5) the central -> exterior
+    flow transition is a continuous capture blend (CAP_BAND_R 0.1 /
+    CAP_BAND_TH 0.3, shifted climb, nearInfinity at w >= 0.5); (6) the
+    side-view camera pans to the attachment / tip targets through the
+    smoothed glows. Full suite green: sideview 5810 checks (new [C]),
+    everything else unchanged.
+
 ## Status / next milestone
 
+- DONE (2026-09-15, six-task UI call, pending user visual check):
+  two-column layout + Parameters tab + Moduli Coordinates rows + gamma->phi
+  rename (task 1), the t slider dual-purposed as the stratum parameter with
+  the t1 slider removed and the lim button below the slider (task 2),
+  stratum paraboloids on the shared focal length and grey/white colors for
+  all paraboloids (task 3), thickened polygon edges via cylinder segments
+  (task 4), the continuous capture blend into the exterior spheres (task
+  5), and the side-view camera pan to the highlighted attachment/tip
+  (task 6). Full suite green: sideview 5810 checks (new [C] capture
+  battery), sweep/walls/edge/locus/exterior/stratum/star/cycle/orient
+  PASS unchanged, validate legacy diffs unchanged (max 3.84e-4 documented
+  spot). Details in task list #16 and the sideview.js/widget.js Files
+  entries.
 - DONE (2026-09-14, same-day three-task batch, user-verified
   2026-09-15: "Looks good"): the I-stratum ("lim t→∞" now enters the stratum: solver
   stratumPair + side-view tip paraboloid with ghost/highlight ramp +
