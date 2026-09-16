@@ -663,17 +663,23 @@ export function makeSideView(host, opts) {
   const paraMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b0, transparent: true, opacity: EXT_UNHI_OPACITY, side: THREE.DoubleSide, depthWrite: false });
   const para = makeParaMesh(paraMat);
   const paraMesh = para.mesh;
-  // Stratum material: grey unhighlighted -> sphere-white highlight (both
-  // palette-driven, so light mode can adapt).
-  const stratMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b0, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+  // Stratum material (2026-09-16): styled EXACTLY like the exterior spheres —
+  // single-sided translucent Lambert surface in the exterior-sphere palette
+  // (ext base, lerping to the extHi highlight), so the stratum reads as one
+  // of the sphere family rather than the old double-sided "half-shaded"
+  // shaded dish. Both palette-driven, so light mode adapts.
+  const stratMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.FrontSide, depthWrite: false });
   const strat = makeParaMesh(stratMat);
   const stratMesh = strat.mesh;
   let stratGlow = 0;
 
+  // Guide arc (the flow boundary, 2026-09-16): a single clean black line
+  // tracing up the surface the dot climbs, replacing the old half-shaded
+  // semi-transparent grey arc. Opaque, dot-colored.
   const arcPos = new Float32Array(33 * 3);
   const arcGeom = new THREE.BufferGeometry();
   arcGeom.setAttribute("position", new THREE.BufferAttribute(arcPos, 3));
-  const arcMat = new THREE.LineBasicMaterial({ color: 0x808080, transparent: true, opacity: 0.55 });
+  const arcMat = new THREE.LineBasicMaterial({ color: 0x000000 });
   const arcLine = new THREE.Line(arcGeom, arcMat);
   scene.add(arcLine);
 
@@ -707,10 +713,10 @@ export function makeSideView(host, opts) {
     centralMat.color.setHex(p.sphere);
     dotMat.color.setHex(p.dot);
     paraMat.color.setHex(p.sphereGrey);
-    arcMat.color.setHex(p.arc);
+    arcMat.color.setHex(p.dot);
     extHiCol.setHex(p.extHi);
     sphereCol.setHex(p.sphere);
-    stratMat.color.setHex(p.sphereGrey);
+    stratMat.color.setHex(p.ext);
     for (let k = 0; k < 3; k++) exts[k].mat.color.setHex(p.ext);
     if (p.sideBg === null) renderer.setClearColor(0x000000, 0);
     else renderer.setClearColor(p.sideBg, 1);
@@ -853,13 +859,19 @@ export function makeSideView(host, opts) {
     // capture) raises the captured sphere's glow to the capture weight, so
     // the sphere lights up smoothly while the dot blends onto it. Two
     // states only: unhighlighted 0.32, highlighted 0.92 (~80 ms lag).
+    // User request 2026-09-16: in stratum mode the exterior sphere
+    // co-highlights only AT the tip slice (t1 = 0); as soon as t > 0 the
+    // sphere highlight is dropped so the stratum carries the highlight
+    // alone.
     const activeAtt = lastState && Number.isInteger(lastState.att) ? lastState.att : -1;
     const capW = lastState && lastState.capture ? lastState.capture.w : 0;
     const capK = lastState && lastState.capture ? lastState.capture.k : -1;
+    const stratumOnly =
+      lastState && lastState.kind === "stratum" && lastState.t1 > 0;
     for (let k = 0; k < 3; k++) {
       const e = exts[k];
       const place = extPlacement[k];
-      const branchTarget = place !== null && k === activeAtt ? 1 : 0;
+      const branchTarget = place !== null && k === activeAtt && !stratumOnly ? 1 : 0;
       const capTarget = place !== null && k === capK ? capW : 0;
       const target = Math.max(branchTarget, capTarget);
       e.glow += (target - e.glow) * (1 - Math.exp(-dt / 0.08));
@@ -926,7 +938,7 @@ export function makeSideView(host, opts) {
     if (lastState && lastState.stratum && stratOp > 0.004) {
       stratMesh.visible = true;
       stratMat.opacity = stratOp;
-      stratMat.color.setHex(p.sphereGrey).lerp(sphereCol, stratGlow);
+      stratMat.color.setHex(p.ext).lerp(extHiCol, stratGlow);
     } else {
       stratMesh.visible = false;
     }

@@ -1385,13 +1385,8 @@ function activate(container) {
     // computed from the solved representative. The closure readout is gone.
     const muRes = momentResidual(res.x, res.y, beta);
     let text = "Moment map residuals " + muRes.toExponential(1);
-    if (stratum) {
-      text +=
-        " · I-stratum " +
-        fmtSet(stratum.I) +
-        " ∥ " +
-        fmtSet(stratum.comp);
-    }
+    // (The former "· I-stratum … ∥ …" tag was removed 2026-09-16 — the
+    // stratum state is clear from the mode button and the side view.)
     if (
       !Number.isFinite(muRes) ||
       res.accuracy.su2Norm > 1e-6 ||

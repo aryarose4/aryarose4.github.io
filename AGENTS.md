@@ -171,6 +171,28 @@ fragility remain.)
   parallel to it somewhere (measured); the servo makes the converged
   twist path-independent (verified 5e-9). `SERVO_TWIST` (export const)
   gates only update()'s servo step; orient.mjs [E] skips when false.
+  GAUGE-JUMP ROBUSTNESS (2026-09-16): the solver's residual gauge can
+  step discontinuously between solves (chart-switch representatives,
+  endpoint rescues) as a RIGID rotation of the whole walk; the old code
+  translated it into a transport whip (the T_DISPLAY slerp takes ~34% of
+  the re-pin arc per frame) plus an idle-servo spin — a visible
+  discontinuous jump during chamber/stratum transitions (measured:
+  0.5-1.1 rad one-frame steps). Fix in update(): step 4.5 runs a Horn
+  best-fit rotation `bestFitRotation` (exported for probes; Jacobi
+  sweeps + best-of-4 eigenvector scoring — the solver walks are
+  near-planar with vertices through the origin, so the Horn matrix has
+  tied eigenclusters and a single pick returns garbage, the same hazard
+  as widget.js task 21) between consecutive raw walks and, when the fit
+  is rigid (residual/scale < JUMP_RESID_FRAC 0.05) and sizable (angle >
+  JUMP_ROT_MIN 0.2, and NOT the wrapped ~2π near-identity fit the
+  degenerate class produces), absorbs the rotation into Q up front:
+  displayed pose does not move at all and the new twist stays put.
+  Continuous slider paths never fire (0 fires measured). The idle servo
+  additionally re-anchors its parking reference whenever the DISPLAYED
+  azimuth steps > TARGET_STEP_PSI 0.35 rad in one frame (non-rigid data
+  steps such as the stratum entry residual), instead of spinning up to
+  the old reference at SERVO_MAX_RATE. Verified: rigid gauge jumps now
+  produce 0.0000 pose motion; battery 6/6 green.
 - `assets/js/hyperpolygon/chambers.js` — stability-chamber geometry
   (shared by widget + harness). The widget tracks ONE chamber, fixed at
   load, recorded as its "short subsets" (subsets I with sum_I beta <
@@ -225,6 +247,13 @@ fragility remain.)
     PARAB_FOCAL); the DRAWN mesh extends to the central paraboloids'
     radius (frame cap = PHI_CAP, spec 2); mesh invisible until
     t >= 0.9, ghost ramp (unhighlighted opacity) to highlight-white when active.
+    STRATUM STYLING (2026-09-16): the stratum paraboloid uses the
+    EXTERIOR-SPHERE material treatment — single-sided (FrontSide, the old
+    DoubleSide "half-shaded" shaded dish look is gone) Lambert surface in
+    the ext palette (ext base lerping to extHi on highlight, same two
+    opacities 0.32/0.92). The guide arc — the flow boundary — is one
+    solid clean BLACK line (dot color, opaque) tracing up the surface,
+    replacing the old semi-transparent grey arc.
     Capture blend: within CAP_BAND_R = 0.1 of an attachment (equator
     also |theta| <= CAP_BAND_TH = 0.3) the central branch blends dot +
     guide arc onto that sphere's meridian (smoothstep w; the exterior
@@ -241,7 +270,12 @@ fragility remain.)
     the t=0 stick, margin test vacuous) and the widget's fillExtMap
     discards non-distinct measurements in favor of the analytic [7,5,6]
     — so entering one sphere lights exactly that one. No more central
-    grey state. Task 19: the CENTRAL sphere CO-HIGHLIGHTS when the dot
+    grey state. STRATUM TRANSITION (user request 2026-09-16): at the
+    stratum's t1 = 0 tip slice the exterior sphere AND the stratum stay
+    co-highlighted (the attachment co-highlight), but as soon as t1 > 0
+    the exterior sphere's highlight is dropped — the stratum carries the
+    highlight alone (bubble branchTarget gated by `kind === "stratum" &&
+    t1 > 0`). Task 19: the CENTRAL sphere CO-HIGHLIGHTS when the dot
     hugs its surface — an attachment is the two spheres' intersection,
     so at t = 0 on an exterior sphere both are lit; the loop's rule is
     geometric (|dot| within max(0.02, 0.25*rk) of centralRadius,
@@ -360,8 +394,9 @@ fragility remain.)
     stratum parameter (solve = stratumPair with the shared
     T_SOLVE_MAX), button becomes "lim t→0" (spec 3; restores parked
     values, jumps t to 1 = ∞), Cross Wall leaves the stratum first;
-    caption gains the I-stratum tag; the doubly-straight stick lights
-    BOTH parallel pairs automatically.
+    the doubly-straight stick lights BOTH parallel pairs automatically
+    (the caption's former "I-stratum … ∥ …" tag was removed 2026-09-16 —
+    the mode is clear from the button and the side view).
   - Stratum branch switches (entry/leave, incl. via Cross Wall) are
     gauge-aligned + morphed in the display layer (task 21):
     kabschRotation -> liftSU2 -> rotatePair -> recompute
@@ -629,6 +664,26 @@ Tracked work items; keep statuses updated.
     stratum-flow checks now drive r to 0.5 first (the lim entry gate
     needs an attachment — correctly hidden at a generic point). Full
     suite green (exit 0).
+23. DONE (2026-09-16, PENDING USER VISUAL CHECK): the 4-item batch —
+    (1) EXTERIOR-STRATUM STYLING (sideview.js): the stratum paraboloid
+    now uses the exterior-sphere material treatment — single-sided
+    (FrontSide; the old DoubleSide "half-shaded" shading along the dish
+    edge is gone) Lambert surface in the ext palette (ext lerping to
+    extHi on highlight, same two opacities 0.32/0.92 as the spheres) —
+    and the guide arc is now a single clean opaque BLACK line (dot
+    color) tracing up the surface, replacing the semi-transparent grey
+    arc; (2) STRATUM HIGHLIGHT TRANSITION (sideview.js): at the stratum
+    t1 = 0 tip slice the exterior sphere and the stratum stay
+    co-highlighted; as soon as t1 > 0 the exterior sphere's highlight is
+    dropped so the stratum carries it alone (bubble branchTarget gated
+    by kind === "stratum" && t1 > 0); (3) UI CLEANUP (widget.js): the
+    caption's "· I-stratum … ∥ …" tag is gone — the residual readout
+    shows "Moment map residuals" only; (4) TWIST-SERVO STABILITY
+    (orientation.js): diagnosed + resolved — see the orientation.js
+    GAUGE-JUMP ROBUSTNESS paragraph above (step 4.5 bestFitRotation
+    absorption + TARGET_STEP_PSI servo re-anchor; measured rigid gauge
+    jumps: 0.0000 pose motion vs 0.5-1.1 rad before, 0 fires on
+    continuous paths; orient battery 6/6 green; full suite exit 0).
 
 ## Status / next milestone
 
@@ -643,8 +698,10 @@ Tracked work items; keep statuses updated.
   #19, #20 and #21 (zoom-coupled labels / co-highlight / intro; the
   1-based indexing / panel cleanup / phi-on-y / scale-button removal;
   the beta_1 = 0.4 default / panel spacing / caption move / stratum
-  alignment+morph) and the 2-item follow-up #22 (slice plots over
-  their slider pairs; r default 0.25) are pending user visual check.
+  alignment+morph), the 2-item follow-up #22 (slice plots over
+  their slider pairs; r default 0.25) and the 4-item batch #23
+  (exterior-stratum styling / stratum highlight transition / caption
+  cleanup / twist-servo stability) are pending user visual check.
 - Accepted known issues (do NOT fix without the user asking):
   (a) dominant-chamber small-t degeneracy behind the Cross Wall flop
   (t = 0 is fixed by the exterior branch; the (1/2,0) locus by the
