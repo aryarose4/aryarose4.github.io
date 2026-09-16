@@ -5,6 +5,8 @@ import {
   makeHyperpolygon,
   stratumPair,
   muSU2Coords,
+  hyperpolygonVertices,
+  sl2Vertices,
   PERMUTE_23,
   starSlots,
   cycleSlots,
@@ -19,6 +21,11 @@ const T_SOLVE_MAX = 0.99;
 // t slider sits in the first LIM_T0_BAND of its range — the tip end its
 // label names, mirroring the entry button's t >= 0.9 gate.
 const LIM_T0_BAND = 0.1;
+// Stratum entry/exit morph (user request 2026-09-15): after the residual-
+// gauge alignment on a branch switch, the remaining intrinsic shape
+// change (the exit pop ~0.03-0.17 at t1 = 0.1, the crossover-class entry)
+// plays as a short smoothstep morph instead of a teleport.
+const STRATUM_MORPH_MS = 350;
 
 const PALETTES = {
   light: {
@@ -93,6 +100,168 @@ function momentResidual(x, y, beta) {
     s += e * e;
   }
   return Math.sqrt(s);
+}
+
+// ===== Stratum branch-switch alignment (user request 2026-09-15) =====
+//
+// The pipeline and I-stratum charts describe the same balanced pair only up
+// to the residual U(2) x U(1)^4 gauge, so the raw representatives can be
+// far apart: measured entry jumps are ~1e-3 (clean classes) but 0.45..0.8
+// at the north sphere of cycle chambers (the stratum normal form puts the
+// stick on the other axis — pure gauge) and 1.0..1.6 at the equator-locus
+// class; the exit pops 0.03..0.17 intrinsically (the stratum family sits
+// at M = M0(1 + t1/(1-t1)) while the pipeline's t = 0.99 approach hugs the
+// t1 = 0 slice). On a branch switch the new pair is gauge-rotated onto the
+// displayed representative (display layer only — all moment maps are
+// gauge-invariant, so the rotated pair is an equally valid solved
+// representative and the readout stays consistent), then the remaining
+// intrinsic change plays as a short morph (STRATUM_MORPH_MS).
+
+// Kabsch-optimal rotation mapping the point list P onto Q (both 9-point
+// polygon walks starting at the origin; UNCENTERED — the gauge rotates
+// about the walk origin). Horn quaternion method: 4x4 symmetric attitude
+// matrix + Jacobi eigen solver. Straight-stick data has tied eigenvalue
+// clusters there, so ALL four candidate eigenvectors are scored by their
+// actual residual and the best kept (a signed-max pick can land in the
+// wrong cluster and return a garbage rotation).
+function kabschRotation(P, Q) {
+  const S = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  for (let k = 0; k < P.length; k++) {
+    const p = P[k];
+    const q = Q[k];
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) S[i][j] += p[i] * q[j];
+    }
+  }
+  const Sxx = S[0][0], Sxy = S[0][1], Sxz = S[0][2];
+  const Syy = S[1][1], Syz = S[1][2];
+  const Szz = S[2][2];
+  const M = [
+    [Sxx + Syy + Szz, Syz - S[2][1], S[2][0] - Sxz, Sxy - S[1][0]],
+    [Syz - S[2][1], Sxx - Syy - Szz, Sxy + S[1][0], S[2][0] + Sxz],
+    [S[2][0] - Sxz, Sxy + S[1][0], -Sxx + Syy - Szz, Syz + S[2][1]],
+    [Sxy - S[1][0], S[2][0] + Sxz, Syz + S[2][1], -Sxx - Syy + Szz],
+  ];
+  const a = M.map((r) => r.slice());
+  const v = [
+    [1, 0, 0, 0],
+    [0, 1, 0, 0],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1],
+  ];
+  for (let sweep = 0; sweep < 60; sweep++) {
+    let am = 0, pi = 0, pj = 1;
+    for (let i = 0; i < 4; i++) {
+      for (let j = i + 1; j < 4; j++) {
+        if (Math.abs(a[i][j]) > am) {
+          am = Math.abs(a[i][j]);
+          pi = i;
+          pj = j;
+        }
+      }
+    }
+    if (am < 1e-15) break;
+    const phi = 0.5 * Math.atan2(2 * a[pi][pj], a[pj][pj] - a[pi][pi]);
+    const c = Math.cos(phi);
+    const s = Math.sin(phi);
+    for (let i = 0; i < 4; i++) {
+      const ap = a[i][pi], aq = a[i][pj];
+      a[i][pi] = c * ap - s * aq;
+      a[i][pj] = s * ap + c * aq;
+    }
+    for (let j = 0; j < 4; j++) {
+      const ap = a[pi][j], aq = a[pj][j];
+      a[pi][j] = c * ap - s * aq;
+      a[pj][j] = s * ap + c * aq;
+    }
+    for (let i = 0; i < 4; i++) {
+      const vp = v[i][pi], vq = v[i][pj];
+      v[i][pi] = c * vp - s * vq;
+      v[i][pj] = s * vp + c * vq;
+    }
+  }
+  let bestR = null;
+  let bestQ = null;
+  let bestAl = Infinity;
+  for (let bi = 0; bi < 4; bi++) {
+    const qw = v[0][bi], qx = v[1][bi], qy = v[2][bi], qz = v[3][bi];
+    const n = Math.hypot(qw, qx, qy, qz);
+    if (!(n > 0)) continue;
+    const w = qw / n, x = qx / n, y = qy / n, z = qz / n;
+    const R = [
+      [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+      [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+      [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+    ];
+    let al = 0;
+    for (let k = 0; k < P.length; k++) {
+      al = Math.max(
+        al,
+        Math.hypot(
+          R[0][0] * P[k][0] + R[0][1] * P[k][1] + R[0][2] * P[k][2] - Q[k][0],
+          R[1][0] * P[k][0] + R[1][1] * P[k][1] + R[1][2] * P[k][2] - Q[k][1],
+          R[2][0] * P[k][0] + R[2][1] * P[k][1] + R[2][2] * P[k][2] - Q[k][2]
+        )
+      );
+    }
+    if (al < bestAl) {
+      bestAl = al;
+      bestR = R;
+      bestQ = [w, x, y, z];
+    }
+  }
+  return { R: bestR, q: bestQ, residual: bestAl };
+}
+
+// SU(2) lift of the unit quaternion [w, x, y, z]: the complex 2x2 matrix
+// g = [[w + i z, -y + i x], [y + i x, w - i z]] satisfies det g = 1 and
+// Ad_g (conjugation on the traceless Hermitian matrices) is exactly the
+// quaternion's rotation matrix above (verified against the solver's
+// hyperpolygonVertices covariance to 1e-15).
+function liftSU2(q) {
+  const w = q[0], x = q[1], y = q[2], z = q[3];
+  return [
+    [[w, z], [-y, x]],
+    [[y, x], [w, -z]],
+  ];
+}
+
+// Residual-gauge rotation of a solved pair: x -> g x, y -> y g^dagger with
+// g the SU(2) matrix above (rows/columns are [re, im] pairs). Unitary, so
+// every moment map is unchanged; the su(2) polygon rotates by Ad_g.
+function rotatePair(x, y, g) {
+  const a = g[0][0];
+  const b = g[0][1];
+  // g^dagger = [[conj(a), -b], [conj(b), a]]
+  const gd = [
+    [[a[0], -a[1]], [-b[0], -b[1]]],
+    [[b[0], -b[1]], [a[0], a[1]]],
+  ];
+  const xg = [0, 1].map((r) =>
+    [0, 1, 2, 3].map((j) => {
+      let s = [0, 0];
+      for (let k = 0; k < 2; k++) {
+        s = [s[0] + (g[r][k][0] * x[k][j][0] - g[r][k][1] * x[k][j][1]),
+             s[1] + (g[r][k][0] * x[k][j][1] + g[r][k][1] * x[k][j][0])];
+      }
+      return s;
+    })
+  );
+  const yg = y.map((row) => {
+    const out = [[0, 0], [0, 0]];
+    for (let j = 0; j < 2; j++) {
+      for (let k = 0; k < 2; k++) {
+        out[j] = [out[j][0] + (row[k][0] * gd[k][j][0] - row[k][1] * gd[k][j][1]),
+                  out[j][1] + (row[k][0] * gd[k][j][1] + row[k][1] * gd[k][j][0])];
+      }
+    }
+    return out;
+  });
+  return [xg, yg];
 }
 
 // Custom range-input styling: a 5px rounded track drawn as a gradient so
@@ -287,8 +456,9 @@ function ensureSliderStyles() {
 function activate(container) {
   ensureSliderStyles();
   // symplectic parameters beta; the beta sliders stay inside ONE stability
-  // chamber, fixed at load (chamber model: chambers.js)
-  const beta = [0.5, 0.5, 0.5, 0.25];
+  // chamber, fixed at load (chamber model: chambers.js). beta_1 starts at
+  // 0.4 (user request 2026-09-15).
+  const beta = [0.4, 0.5, 0.5, 0.25];
   // the chamber of the initial beta, recorded as its short subsets — the
   // {I} < {complement} inequalities shown as boxes below. applyBetaDrag
   // clamps every drag into the chamber's closure (walls may be touched,
@@ -446,6 +616,8 @@ function activate(container) {
   topFlex.style.flexWrap = "wrap";
   topFlex.style.alignItems = "flex-start";
   topFlex.style.gap = "12px";
+  // spacing below the matrix-readout panel, matching the panels' 12px
+  topFlex.style.marginTop = "12px";
   container.appendChild(topFlex);
   const leftCol = document.createElement("div");
   leftCol.style.flex = "1 1 340px";
@@ -461,11 +633,6 @@ function activate(container) {
   canvasBox.style.width = "100%";
   canvasBox.style.aspectRatio = "1 / 1";
   leftCol.appendChild(canvasBox);
-
-  const caption = document.createElement("div");
-  caption.style.marginTop = "8px";
-  caption.style.fontSize = "0.85em";
-  leftCol.appendChild(caption);
 
   // Moduli Coordinates (2026-09-15): the four moduli sliders sectioned in
   // one box. The rows are (r, theta) first, (t, phi) second — the t and
@@ -489,6 +656,13 @@ function activate(container) {
   modRowTG.style.gap = "6px 16px";
   modRowTG.style.marginTop = "6px";
   moduliBox.appendChild(modRowTG);
+
+  // moment-map residual readout (spec 15), moved BELOW the Moduli
+  // Coordinates panel (user request 2026-09-15)
+  const caption = document.createElement("div");
+  caption.style.marginTop = "8px";
+  caption.style.fontSize = "0.85em";
+  leftCol.appendChild(caption);
 
   // Top-right overlay (task 1): the chamber's three short pairs, one row
   // per exterior sphere, each naming the two leg vectors that pair
@@ -857,6 +1031,13 @@ function activate(container) {
 
   const orientor = makeOrientor();
   let lastVerts = null;
+  // last solved branch (0 = pipeline, 1 = I-stratum): crossing between the
+  // two charts is where the display needs gauge alignment + morph
+  let lastBranch = -1;
+  // active entry/exit morph: { from, to, sl2From, sl2To, start } — the
+  // polygon buffers play a short blend from the previously displayed
+  // geometry to the aligned target instead of teleporting
+  let morph = null;
   let lastInput = -1e9;
   let lastFrame = performance.now();
   // side-view scene; created below (applyColors refreshes its theme too)
@@ -982,6 +1163,80 @@ function activate(container) {
     if (sideView) sideView.refreshTheme();
   }
 
+  // write the polygon geometry (edge cylinders, vertex markers, side-label
+  // positions) from a 9-point vertex walk; called by solveAndDraw for a
+  // direct write and by the per-frame morph step for the blend states
+  function writePolygonGeometry(pts) {
+    const scale = Math.max.apply(
+      null,
+      pts.map((p) => Math.hypot(p[0], p[1], p[2]))
+    );
+    for (let seg = 0; seg < 8; seg++) setSegment(seg, pts[seg], pts[seg + 1]);
+    for (let i = 0; i < 9; i++) {
+      markPos[i * 3] = pts[i][0];
+      markPos[i * 3 + 1] = pts[i][1];
+      markPos[i * 3 + 2] = pts[i][2];
+    }
+    markGeom.attributes.position.needsUpdate = true;
+    // Task 1: edge labels at the side midpoints, pushed away from the
+    // polygon centroid (their SIZE is set per frame in updateLabelScales)
+    let cen = [0, 0, 0];
+    for (let i = 0; i < 9; i++) {
+      cen[0] += pts[i][0];
+      cen[1] += pts[i][1];
+      cen[2] += pts[i][2];
+    }
+    cen = [cen[0] / 9, cen[1] / 9, cen[2] / 9];
+    for (let i = 0; i < 4; i++) {
+      const sp = sideLabelSprites[i];
+      const mx = (pts[2 * i][0] + pts[2 * i + 2][0]) / 2;
+      const my = (pts[2 * i][1] + pts[2 * i + 2][1]) / 2;
+      const mz = (pts[2 * i][2] + pts[2 * i + 2][2]) / 2;
+      let dx = mx - cen[0];
+      let dy = my - cen[1];
+      let dz = mz - cen[2];
+      const dn = Math.hypot(dx, dy, dz);
+      if (dn > 1e-9 * scale) {
+        const push = 0.06 * scale / dn;
+        sp.position.set(mx + dx * push, my + dy * push, mz + dz * push);
+      } else {
+        sp.position.set(mx, my, mz);
+      }
+    }
+  }
+
+  // blend of the two 9-point walks / SL(2,C) polygons at morph weight e
+  function morphBlend(e) {
+    const verts = morph.from.map((p, k) => [
+      p[0] + (morph.to[k][0] - p[0]) * e,
+      p[1] + (morph.to[k][1] - p[1]) * e,
+      p[2] + (morph.to[k][2] - p[2]) * e,
+    ]);
+    const mix = (A, B) =>
+      A.map((p, k) => [
+        p[0] + (B[k][0] - p[0]) * e,
+        p[1] + (B[k][1] - p[1]) * e,
+        p[2] + (B[k][2] - p[2]) * e,
+      ]);
+    return {
+      verts: verts,
+      sl2: {
+        real: mix(morph.sl2From.real, morph.sl2To.real),
+        imag: mix(morph.sl2From.imag, morph.sl2To.imag),
+      },
+    };
+  }
+
+  // the currently displayed polygon state — the morph blend while an
+  // entry/exit morph plays, otherwise the last committed solve (used when
+  // a second branch switch lands mid-morph: the new morph starts from
+  // what is on screen, not from the interrupted target)
+  function displayedState() {
+    if (!morph) return { verts: lastVerts, sl2: sl2Base };
+    const s = Math.min(1, Math.max(0, (performance.now() - morph.start) / STRATUM_MORPH_MS));
+    return morphBlend(s * s * (3 - 2 * s));
+  }
+
   function solveAndDraw() {
     const r = parseFloat(rInput.value);
     const theta = parseFloat(thetaInput.value) * Math.PI;
@@ -1017,19 +1272,55 @@ function activate(container) {
       caption.textContent = "⚠ solver failed at this parameter point";
       return;
     }
-    const pts = res.vertices;
-    lastVerts = pts;
-    const scale = Math.max.apply(
-      null,
-      pts.map((p) => Math.hypot(p[0], p[1], p[2]))
-    );
-    for (let seg = 0; seg < 8; seg++) setSegment(seg, pts[seg], pts[seg + 1]);
-    for (let i = 0; i < 9; i++) {
-      markPos[i * 3] = pts[i][0];
-      markPos[i * 3 + 1] = pts[i][1];
-      markPos[i * 3 + 2] = pts[i][2];
+    // Branch-switch alignment (stratum entry/exit, user request 2026-09-15):
+    // the pipeline and I-stratum charts differ by the residual U(2) gauge —
+    // measured entry jumps 1e-3..1.3e-2 clean but 0.45..0.8 at the north
+    // sphere of cycle chambers (the stratum normal form puts the stick on
+    // the other axis — pure gauge) and 1.0..1.6 at the equator-locus class.
+    // Kabsch-align the new polygon onto the displayed one, apply the SU(2)
+    // lift to the PAIR (x -> g x, y -> y g^dagger — unitary, moment maps
+    // invariant, so the rotated pair is an equally valid solved
+    // representative and the matrix readout stays consistent) and recompute
+    // both polygon outputs from it. The remaining intrinsic change (the
+    // exit pop, the crossover-class entry) is played as a short morph.
+    const branch = stratum ? 1 : 0;
+    const switched = lastVerts !== null && branch !== lastBranch;
+    let pts = res.vertices;
+    let sl2 = res.sl2;
+    if (switched) {
+      const ka = kabschRotation(pts, lastVerts);
+      if (ka.q) {
+        const rotated = rotatePair(res.x, res.y, liftSU2(ka.q));
+        pts = hyperpolygonVertices(rotated[0], rotated[1]);
+        sl2 = sl2Vertices(rotated[0], rotated[1]);
+        res = {
+          x: rotated[0],
+          y: rotated[1],
+          vertices: pts,
+          sl2: sl2,
+          accuracy: res.accuracy,
+        };
+      }
     }
-    markGeom.attributes.position.needsUpdate = true;
+    // capture the displayed state BEFORE any state updates (a second
+    // branch switch mid-morph starts its blend from what is on screen)
+    const prevDisplayed = displayedState();
+    lastVerts = pts;
+    if (switched) {
+      // start (or re-target) the entry/exit morph from the CURRENTLY
+      // displayed state — the polygon buffers keep playing the blend (the
+      // per-frame morph step in loop() writes them from here on)
+      morph = {
+        from: prevDisplayed.verts,
+        to: pts,
+        sl2From: prevDisplayed.sl2,
+        sl2To: sl2,
+        start: performance.now(),
+      };
+    } else {
+      morph = null;
+      writePolygonGeometry(pts);
+    }
     applyColors();
     // Spec 13: the live matrix readout shows the solved representative
     // (balanced, moment-map satisfying); updatePhiViews below writes the
@@ -1083,32 +1374,6 @@ function activate(container) {
       pairRows[k].classList.toggle("hp-straight", straight);
     }
 
-    // Task 1: edge labels at the side midpoints, pushed away from the
-    // polygon centroid (their SIZE is set per frame in updateLabelScales)
-    let cen = [0, 0, 0];
-    for (let i = 0; i < 9; i++) {
-      cen[0] += pts[i][0];
-      cen[1] += pts[i][1];
-      cen[2] += pts[i][2];
-    }
-    cen = [cen[0] / 9, cen[1] / 9, cen[2] / 9];
-    for (let i = 0; i < 4; i++) {
-      const sp = sideLabelSprites[i];
-      const mx = (pts[2 * i][0] + pts[2 * i + 2][0]) / 2;
-      const my = (pts[2 * i][1] + pts[2 * i + 2][1]) / 2;
-      const mz = (pts[2 * i][2] + pts[2 * i + 2][2]) / 2;
-      let dx = mx - cen[0];
-      let dy = my - cen[1];
-      let dz = mz - cen[2];
-      const dn = Math.hypot(dx, dy, dz);
-      if (dn > 1e-9 * scale) {
-        const push = 0.06 * scale / dn;
-        sp.position.set(mx + dx * push, my + dy * push, mz + dz * push);
-      } else {
-        sp.position.set(mx, my, mz);
-      }
-    }
-
     // Task 2/3: phi base data — the solved y (the phase acts on it) and
     // the SL(2,C) polygon; updatePhiViews applies the current phi to the
     // y readout and (as the byproduct) the SL canvases
@@ -1119,7 +1384,7 @@ function activate(container) {
     // residuals (the 3 su(2) components + the 4 per-leg U(1) components),
     // computed from the solved representative. The closure readout is gone.
     const muRes = momentResidual(res.x, res.y, beta);
-    let text = "moment map residual " + muRes.toExponential(1);
+    let text = "Moment map residuals " + muRes.toExponential(1);
     if (stratum) {
       text +=
         " · I-stratum " +
@@ -1135,6 +1400,7 @@ function activate(container) {
       text += " · ⚠ degraded";
     }
     caption.textContent = text;
+    lastBranch = branch;
   }
 
   let pending = true;
@@ -1193,7 +1459,9 @@ function activate(container) {
   // Spec 8: r snaps magnetically at the poles r = 0 and r = 1 (tol 0.05 =
   // 10 slider steps — the attachment points of the exterior spheres) in
   // addition to the equator snap at 0.5.
-  const rInput = makeSlider("r", 0, 1, 0.005, 0.5, (v) => v.toFixed(3), [
+  // r starts at 0.25 (user request 2026-09-16): a generic interior point —
+  // off the (0, 0.5, 1) attachment snaps and off the (1/2, 0) locus
+  const rInput = makeSlider("r", 0, 1, 0.005, 0.25, (v) => v.toFixed(3), [
     { value: 0, tol: 0.05 },
     { value: 0.5, tol: 0.02 },
     { value: 1, tol: 0.05 },
@@ -1521,7 +1789,7 @@ function activate(container) {
       ctx.fill();
       ctx.stroke();
     }
-    const plot = { draw: draw };
+    const plot = { draw: draw, wrap: wrap };
     slicePlots.push(plot);
     return plot;
   }
@@ -1531,8 +1799,10 @@ function activate(container) {
   sliceRow.style.gap = "18px";
   sliceRow.style.justifyContent = "center";
   panel.appendChild(sliceRow);
-  makeSlicePlot(0, 1);
-  makeSlicePlot(2, 3);
+  // the (beta_1, beta_2) and (beta_3, beta_4) plane plots; their placement
+  // over the matching slider pairs is set in pickBetaColumns
+  const plotA = makeSlicePlot(0, 1);
+  const plotB = makeSlicePlot(2, 3);
   function drawSlicePlots() {
     for (let k = 0; k < slicePlots.length; k++) slicePlots[k].draw();
   }
@@ -1553,6 +1823,49 @@ function activate(container) {
     const w = betaRow.clientWidth;
     const cols = w >= 700 ? 4 : w >= 340 ? 2 : 1;
     betaRow.style.gridTemplateColumns = "repeat(" + cols + ", minmax(0, 1fr))";
+    // Center each chamber-slice plot over its own slider pair (user
+    // request 2026-09-16): the plots ride the SAME grid as the sliders.
+    // At 4 columns the on-screen slider order is beta_1, beta_3, beta_2,
+    // beta_4, so the (beta_1, beta_2) plot centers over the midpoint of
+    // columns 1 and 3 (= the column-2 center, exact by symmetry) and the
+    // (beta_3, beta_4) plot over the midpoint of columns 2 and 4 (the
+    // column-3 center). At 2 columns each pair shares a column, so the
+    // plots sit over columns 1 and 2. The 1-column layout falls back to
+    // the centered row.
+    const clearPlacement = (plot) => {
+      plot.wrap.style.gridColumn = "";
+      plot.wrap.style.gridRow = "";
+      plot.wrap.style.justifySelf = "";
+    };
+    if (cols >= 2) {
+      sliceRow.style.display = "grid";
+      sliceRow.style.gap = "0px";
+      sliceRow.style.columnGap = "16px";
+      sliceRow.style.rowGap = "0px";
+      sliceRow.style.justifyContent = "";
+      sliceRow.style.gridTemplateColumns =
+        "repeat(" + cols + ", minmax(0, 1fr))";
+      if (cols === 4) {
+        plotA.wrap.style.gridColumn = "1 / span 3";
+        plotB.wrap.style.gridColumn = "2 / span 3";
+      } else {
+        plotA.wrap.style.gridColumn = "1";
+        plotB.wrap.style.gridColumn = "2";
+      }
+      plotA.wrap.style.gridRow = "1";
+      plotB.wrap.style.gridRow = "1";
+      plotA.wrap.style.justifySelf = "center";
+      plotB.wrap.style.justifySelf = "center";
+    } else {
+      sliceRow.style.display = "flex";
+      sliceRow.style.gap = "18px";
+      sliceRow.style.columnGap = "";
+      sliceRow.style.rowGap = "";
+      sliceRow.style.justifyContent = "center";
+      sliceRow.style.gridTemplateColumns = "";
+      clearPlacement(plotA);
+      clearPlacement(plotB);
+    }
   }
   new ResizeObserver(pickBetaColumns).observe(betaRow);
 
@@ -1644,7 +1957,7 @@ function activate(container) {
   chamberRow.style.marginTop = "10px";
   const chamberLabel = document.createElement("span");
   chamberLabel.style.fontSize = "0.85em";
-  chamberLabel.textContent = "Chamber Inequalities:";
+  chamberLabel.textContent = "Chamber inequalities:";
   chamberRow.appendChild(chamberLabel);
   const chamberBoxes = [];
   for (let k = 1; k < chamberShorts.length; k++) {
@@ -1766,6 +2079,21 @@ function activate(container) {
       pending = false;
       solveAndDraw();
       refreshSide();
+    }
+    // stratum entry/exit morph: play the aligned geometry change as a
+    // short smoothstep blend (the orientor consumes the blended walk, so
+    // the chord transport stays continuous through the transition)
+    if (morph) {
+      // clamp to [0,1]: morph.start is set mid-frame (after the loop read
+      // `now`), so the creation frame's raw s is slightly negative
+      const s = Math.min(1, Math.max(0, (now - morph.start) / STRATUM_MORPH_MS));
+      const e = s * s * (3 - 2 * s);
+      const cur = morphBlend(e);
+      lastVerts = cur.verts;
+      writePolygonGeometry(cur.verts);
+      sl2Base = cur.sl2;
+      updatePhiViews();
+      if (s >= 1) morph = null;
     }
     if (lastVerts) {
       const q = orientor.update(lastVerts, dt, { idle: now - lastInput > 250 });

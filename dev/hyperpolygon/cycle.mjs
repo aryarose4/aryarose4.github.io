@@ -68,7 +68,7 @@ const STARS = [
   { j: 2, beta: [0.28, 0.27, 0.2, 0.25] },
   { j: 3, beta: [0.28, 0.27, 0.25, 0.2] },
 ];
-const WIDGET_DEFAULT = [0.5, 0.5, 0.5, 0.25];
+const WIDGET_DEFAULT = [0.4, 0.5, 0.5, 0.25];
 const NOTEBOOK = [1 / 6, 1 / 7, 1 / 7, 1 / 10];
 
 let failures = 0;

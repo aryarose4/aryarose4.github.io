@@ -362,6 +362,13 @@ fragility remain.)
     values, jumps t to 1 = ∞), Cross Wall leaves the stratum first;
     caption gains the I-stratum tag; the doubly-straight stick lights
     BOTH parallel pairs automatically.
+  - Stratum branch switches (entry/leave, incl. via Cross Wall) are
+    gauge-aligned + morphed in the display layer (task 21):
+    kabschRotation -> liftSU2 -> rotatePair -> recompute
+    vertices/sl2 -> 350 ms smoothstep morph (STRATUM_MORPH_MS; the
+    helpers live at module scope in widget.js). Do not "simplify" the
+    best-of-4 eigenvector scoring — stick data makes the Horn matrix's
+    top eigenvalue 2-dim and a single pick can return garbage.
 - `mathematica/` — reference notebooks and legacy data. Excluded from
   the Jekyll build; `mathematica/hyperpolygonData*` is gitignored
   (137 MB file, over GitHub's limit). `generateHyperpolygonData.wls`
@@ -555,10 +562,77 @@ Tracked work items; keep statuses updated.
     scale-robustness loop); (5) project-page intro shortened ~7 rendered
     lines (two mu display blocks merged into one, |v|-|w| display
     inlined) and re-indexed 1-based.
+21. DONE (2026-09-15, PENDING USER VISUAL CHECK): the 5-item batch —
+    (1) default beta_1 = 0.4 (widget.js `beta = [0.4, 0.5, 0.5, 0.25]`;
+    still the star-j3 chamber and the SAME displayed short pairs
+    {2,3}/{1,3}/{0,3}; walls.mjs [F] tuple updated with EXPECT =
+    [[],[0],[1],[2],[3],[2,3],[1,3],[0,3]] — hand-computing the slot-5
+    short side is error-prone: {0,1} sums 0.9 vs {2,3} 0.75 so {2,3} is
+    SHORT; star.mjs/cycle.mjs WIDGET_DEFAULT updated; the stub harness's
+    phi-y threshold relaxed to 2 because the y matrix at the
+    leave-stratum state now shows only 2 visibly-nonzero readout
+    entries); (2) 12px margin between the solved-pair matrix panel and
+    the two-column viewports (topFlex margin-top, matching .hp-panel);
+    (3) the moment-map-residual caption moved BELOW the Moduli
+    Coordinates panel and renamed "Moment map residuals"; (4) "Chamber
+    inequalities:" (lowercase i); (5) stratum entry/exit jumpiness FIXED
+    in the display layer (widget.js only, solver untouched): measured
+    raw entry jumps 1e-3..1.3e-2 clean but 0.45..0.8 at the NORTH sphere
+    of cycle chambers (stratumPair's e1/e2 normal form puts the stick on
+    the other axis — pure gauge; the battery's per-leg-norm [B] checks
+    cannot see an axis flip) and 1.0..1.6 at the equator I={0,1} locus
+    class, plus an INTRINSIC exit pop 0.03..0.17 in every chamber (the
+    stratum family M = M0(1 + t1/(1-t1)) vs the pipeline's t = 0.99
+    approach hugging the t1 = 0 slice). Fix: on every
+    stratum<->pipeline branch switch the widget Kabsch-aligns the new
+    9-point walk onto the displayed one (Horn quaternion + Jacobi; ALL
+    four candidate eigenvectors are scored and the best kept — a
+    signed-max pick lands in the wrong tied eigenvalue cluster on
+    stick data and returns garbage), applies the SU(2) lift
+    (g = [[w+iz, -y+ix], [y+ix, w-iz]], Ad_g = the quaternion's
+    rotation — verified against hyperpolygonVertices' exact U(2)
+    covariance, 4.5e-16) to the PAIR itself (x -> g x, y -> y g^dagger;
+    unitary so every moment map is bit-stable and the matrix readout
+    shows the equally-solved rotated representative; the SL(2,C)
+    polygons then match the reference to 5e-5..3.6e-4 in the clean
+    classes), recomputes vertices + sl2 from the rotated pair, and
+    plays the remaining intrinsic change as a 350 ms smoothstep morph
+    (STRATUM_MORPH_MS — MUST stay in ms: the first draft divided
+    performance.now()'s milliseconds by 0.35 seconds and expired in one
+    frame; also clamp the raw s to [0,1] — morph.start is set mid-frame
+    after the loop read `now`, so the creation frame's raw s is
+    negative and the smoothstep explodes there). Geometry writes are
+    centralized in writePolygonGeometry (used by solveAndDraw AND the
+    per-frame morph step); a second branch switch mid-morph restarts
+    the blend from displayedState() (the on-screen blend); a same-branch
+    solve mid-morph cancels the morph and snaps (rare, bounded).
+    Full suite green (exit 0); legacy validate diffs unchanged.
+22. DONE (2026-09-16, PENDING USER VISUAL CHECK): the 2-item follow-up —
+    (1) the chamber-slice plots are CENTERED OVER THEIR SLIDER PAIRS
+    (user request): the plots ride the SAME grid as the beta sliders
+    (pickBetaColumns sets sliceRow's template + placement). At 4
+    columns the on-screen slider order is beta_1, beta_3, beta_2,
+    beta_4, so (beta_1, beta_2) spans columns 1-3 centered = the
+    midpoint of its two sliders (the column-2 center, exact by
+    symmetry) and (beta_3, beta_4) spans columns 2-4 (the column-3
+    center); both carry gridRow 1 (explicit overlap is allowed). At 2
+    columns each pair shares a column, so the plots sit over columns
+    1/2; 1 column falls back to the centered flex row. plotA/plotB
+    wraps returned by makeSlicePlot. (2) the r slider DEFAULTS to 0.25
+    (user request) — a generic interior point: off the attachment snaps
+    and off the (1/2,0) locus; the default-state solve is clean
+    (~1e-16). The stub harness was updated: at the r=0.25 default the
+    dot rides the CENTRAL branch, so the central sphere stays
+    highlighted (kind "central" -> centralTarget = 1 - capW — the
+    co-highlight band only ADDS glow for exterior-owned dots) and all
+    three exterior spheres stay dim; the attachment co-highlight and
+    stratum-flow checks now drive r to 0.5 first (the lim entry gate
+    needs an attachment — correctly hidden at a generic point). Full
+    suite green (exit 0).
 
 ## Status / next milestone
 
-- Current state (2026-09-15): full suite green — sideview 5810 checks;
+- Current state (2026-09-16): full suite green — sideview 5810 checks;
   sweep/walls/edge/locus/exterior/stratum/star/cycle/orient PASS;
   validate legacy diffs unchanged (max 3.84e-4 documented spot). The
   2026-09-15 six-task UI batch (task #16) and the 15-spec batch
@@ -566,9 +640,11 @@ Tracked work items; keep statuses updated.
   (theta/t DOM swap before phiInput's declaration) that blanked the
   widget — fixed the same day; see the dev-environment gotcha. Task
   #18 (7-item display batch) is user-confirmed. The 5-item batches
-  #19 and #20 (zoom-coupled labels / co-highlight / intro, and the
-  1-based indexing / panel cleanup / phi-on-y / scale-button removal)
-  are pending user visual check.
+  #19, #20 and #21 (zoom-coupled labels / co-highlight / intro; the
+  1-based indexing / panel cleanup / phi-on-y / scale-button removal;
+  the beta_1 = 0.4 default / panel spacing / caption move / stratum
+  alignment+morph) and the 2-item follow-up #22 (slice plots over
+  their slider pairs; r default 0.25) are pending user visual check.
 - Accepted known issues (do NOT fix without the user asking):
   (a) dominant-chamber small-t degeneracy behind the Cross Wall flop
   (t = 0 is fixed by the exterior branch; the (1/2,0) locus by the
@@ -581,8 +657,11 @@ Tracked work items; keep statuses updated.
   (d) y-side per-leg |y_i|^2 deltas between the charts on a flop (up to
   1.0 — the SL(2,C) view can change on a flop);
   (e) stratum entry is display-continuous at t >= 0.9 EXCEPT the
-  measured crossover classes (see stratumPair above), where a jump at
-  t >~ 0.95 is intrinsic;
+   measured crossover classes (see stratumPair above), where a shape
+   change at t >~ 0.95 is intrinsic — since task 21 the widget plays
+   it as a 350 ms gauge-aligned morph (smoothed, not removed); the
+   exit pop (stratum M(t1) vs the pipeline's t = 0.99 approach) is
+   smoothed the same way;
   (f) side-view branch crossing at the snap boundary is a visible jump
   (mitigated by the capture blend);
   (g) task 19: leaving the stratum now requires dragging t back to
@@ -602,6 +681,11 @@ Tracked work items; keep statuses updated.
   theta/t DOM swap ran before `phiInput`'s declaration); it is now caught
   by a DOM/THREE stub harness (/tmp, not committed) that runs activate()
   end-to-end — re-create it when touching widget setup order.
+- `performance.now()` is MILLISECONDS: widget-side durations must be in
+  ms (task 21's first draft divided ms by a 0.35 s constant and the
+  morph expired in one frame). Frame-relative state set mid-loop (e.g.
+  `morph.start`) must be clamped — the loop's `now` was read earlier, so
+  the creation frame's raw delta is negative.
 - Start the preview via the `/serve` command (`.kilo/command/serve.md`):
   `bundle exec jekyll serve --host 0.0.0.0 --port 8080` (takes ~25 s to
   build; page then at http://localhost:8080/projects/hyperpolygon_moduli_spaces/).

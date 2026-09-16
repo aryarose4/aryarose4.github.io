@@ -565,9 +565,9 @@ console.log("[E] widget call-pattern equivalence (solve beta=[b0,b1,b3,b2], perm
 
 // ---------------------------------------------------------------------------
 // [F] defaults sanity (the chamber the widget locks at load)
-console.log("[F] defaults sanity (beta = (0.5, 0.5, 0.5, 0.25))");
+console.log("[F] defaults sanity (beta = (0.4, 0.5, 0.5, 0.25))");
 {
-  const beta = [0.5, 0.5, 0.5, 0.25];
+  const beta = [0.4, 0.5, 0.5, 0.25];
   for (let i = 0; i < 4; i++) {
     const iv = betaInterval(i, beta);
     if (!(iv.lo < beta[i] && beta[i] < iv.hi))
@@ -581,6 +581,8 @@ console.log("[F] defaults sanity (beta = (0.5, 0.5, 0.5, 0.25))");
   else console.log("  clampToChamber(copy) moved nothing: OK");
   // short subsets of the default beta, in slot order (trivial, leg slots,
   // pair slots): the inequalities the widget displays as boxes
+  // (0.4, 0.5, 0.5, 0.25): {0,1} vs {2,3} -> {2,3} short (0.75 < 0.9),
+  // {0,2} vs {1,3} -> {1,3} short, {0,3} vs {1,2} -> {0,3} (star-j3 chamber)
   const EXPECT = [[], [0], [1], [2], [3], [2, 3], [1, 3], [0, 3]];
   const sh = shortSubsets(beta);
   const eqS = (A, B) =>
