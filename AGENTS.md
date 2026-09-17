@@ -516,12 +516,9 @@ Lesson sequence (explainer -> task -> unlock):
    observe the su(2) polygon + residual caption DO NOT move (only the
    matrix readout rotates, y -> e^{i·phi} y). Teaches: the display
    always shows the UNIQUE balanced representative; every stable
-   representation is gauge-equivalent to it. Optional tutorial-only
-   demo (decide at build time): "shuffle gauge" applies a random
-   U(2) x U(1)^4 gauge to the DISPLAYED pair (readout goes wild,
-   residuals unchanged), then re-balances and morphs back to the
-   canonical polygon — reuse the task-21 Kabsch/morph machinery,
-   display-only. Unlocks the beta panel.
+   representation is gauge-equivalent to it. Unlocks the beta panel.
+   (The hands-on gauge mini-game was MOVED OUT of the tutorial — see
+   "How it works" explainer below.)
 4. Stability data: beta & the chamber — task: drag one beta slider
    until an inequality box turns amber (the chamber-lock clamp keeps
    the tuple ON the wall; crossing NOT explained yet). Teaches: beta
@@ -541,7 +538,20 @@ Lesson sequence (explainer -> task -> unlock):
    degenerate representation approached as t -> infinity.
 7. Free play / recap — everything unlocked; recap card ties the three
    targets together; optional mini-challenges (find a wall from a
-   random chamber; enter a stratum; sweep phi after a gauge shuffle).
+   random chamber; enter a stratum).
+
+"How it works" explainer (FUTURE, SEPARATE — not part of the
+tutorial; its own button next to Tutorial, e.g. a modal or dedicated
+panel; see task #25): an interactive Kempf–Ness mini-game. Start from
+a stable polygon (like a simple one in the solve ansatz) and have the
+user try to find a *complex* gauge transformation to solve the moment
+map equations using sliders. An edge becomes highlighted when it is
+the correct length, but changing another slider can ruin a previously
+satisfied one. A "give up" button lets the solver find the correct
+slider positions. Caveat (user, 2026-09-17): the gauge group is too
+high dimensional to do this for real — special case with exactly 7
+sliders (likely the 7 free complex y-entries of the star ansatz;
+exact mapping + per-edge residual split settle at build time).
 
 Build-time gotchas & open decisions:
 - Touching widget setup order = the TDZ hazard: re-create the DOM/THREE
@@ -552,10 +562,30 @@ Build-time gotchas & open decisions:
   degraded captions, theta=0 stall basin, on-wall chart mismatch):
   lessons use generic points and moderate t; do not promise
   wall-adjacent smoothness.
-- Open: card anchoring vs corner dock; whether the shuffle-gauge demo
-  is in scope (the most compelling Kempf–Ness demo, but careful
-  display-layer work; phi-only is the fallback); progress persistence;
-  one-column/mobile behavior of the card.
+- Open decisions SETTLED (2026-09-17, user): anchored card with corner
+  dock fallback; session-only progress (no persistence); bottom dock
+  under ~700px. The gauge mini-game is OUT of the tutorial (separate
+  "How it works" explainer, task #25).
+- Milestone status (2026-09-17): milestone 1 = button + gating registry +
+  lessons 0-2. Milestone 2 = the gauge lesson (old #3) is DROPPED per
+  user — phi stays gated until the recap and the lessons renumber 0-6 —
+  and lesson 3 (beta/chamber) is IMPLEMENTED: task = drag any beta
+  slider to a red-zone end until an inequality box turns amber (the
+  chamber-lock clamp stops it exactly ON the wall); predicate reads the
+  boxes' hp-breaking state; live "nearest wall: d" readout computed via
+  chamberInterval (ctx gains chamberShorts/chamberInterval/moduliBox/
+  paramsCard); completing unlocks Cross Wall + lim; entering lesson 3
+  while already on a wall resets beta to the default tuple (clean
+  interior start). CARD DOCKING FIX (user request 2026-09-17 — the old
+  under-the-slider anchor covered the sliders a task needed, e.g. the
+  beta rows below beta_1): the card docks BELOW the anchor's OWNING
+  panel — Moduli Coordinates for r/θ/t/φ/lim, Parameters for the beta
+  sliders and Cross Wall — and the container's bottom padding is
+  reserved to the card's height while active (restored on exit), so the
+  docked card always fits below the content and NEVER covers a control;
+  < 700px it is the full-width bottom dock inside the same band;
+  anchorless placeholder lessons keep the top-right corner dock.
+  Lessons 4-6 (wall-crossing, strata, recap) remain placeholders.
 
 ## Task list
 
@@ -775,16 +805,41 @@ Tracked work items; keep statuses updated.
     absorption + TARGET_STEP_PSI servo re-anchor; measured rigid gauge
     jumps: 0.0000 pose motion vs 0.5-1.1 rad before, 0 fires on
     continuous paths; orient battery 6/6 green; full suite exit 0).
-24. TODO: game-like tutorial mode — implement the Tutorial plan section
-    above (Tutorial button -> tutorial.js state machine, widget-side
-    control-gating registry, lessons 0-7). Do NOT start without the
-    user asking; settle the open decisions first.
+ 24. DONE (2026-09-17, USER CONFIRMED): game-like tutorial mode,
+     COMPLETE (9 lessons 0-8). Milestones 1-2 as before; the 2026-09-17
+     completion batch (user requests): (1) all lesson text brief (details
+     deferred to the "How it works" explainer, task #25); (2) Next is
+     task-gated on EVERY lesson — the Skip button is removed; (3) new
+     lessons: tdir = generic position then t up; r1 = ordered sub-tasks
+     (t -> 0, r -> 1, t up again; phase state on the lesson object,
+     re-armed on every entry incl. Back); phi = gauge phase on y, task =
+     sweep >= pi/2 (phi unlocks here); (4) Cross Wall is locked until the
+     wall-crossing lesson and lim until the strata lesson (lesson control
+     lists + grants; the beta lesson no longer grants them); (5) real
+     wall-crossing lesson (task = chamber snapshot changes; beta sliders
+     enabled so a wall can be reached if none is amber), real strata
+     lesson (task phases: enter stratum via lim, climb t >= 0.8, leave),
+     real recap (free play, all controls). enterLesson ALWAYS leaves the
+     stratum first (Back out of strata mid-stratum would soft-lock).
+     Headless fake-ctx smoke test (/tmp/kilo/tut-test.mjs, uncommitted)
+     walks all 9 lessons incl. ordering/gating/Back/exit — 27 checks PASS.
+     widget.js untouched; full suite exit 0.
+ 25. TODO: "How it works" Kempf–Ness mini-game explainer (separate
+     button next to Tutorial; see the plan section above). 7-slider
+     special case; give-up button fills the solver's values. Will carry
+     the detailed explanations removed from the tutorial text.
 
 ## Status / next milestone
 
-- Current state (2026-09-16): full suite green — sideview 5810 checks;
+- Current state (2026-09-17): full suite green — sideview 5810 checks;
   sweep/walls/edge/locus/exterior/stratum/star/cycle/orient PASS;
-  validate legacy diffs unchanged (max 3.84e-4 documented spot). The
+  validate legacy diffs unchanged (max 3.84e-4 documented spot).
+  2026-09-17 batch USER-CONFIRMED: tutorial COMPLETE
+  (task #24; brief text, task-gated Next, Cross Wall/lim lesson-gated,
+  real wall-crossing/strata/recap lessons) and the CENTRAL paraboloid
+  restyled to the exterior/stratum treatment (FrontSide + ext palette,
+  lerp to extHi on climb — user request: match the exterior paraboloids,
+  shading artifacts gone). widget.js untouched. The
   2026-09-15 six-task UI batch (task #16) and the 15-spec batch
   (task #17) are user-confirmed. Task #17 initially shipped a TDZ bug
   (theta/t DOM swap before phiInput's declaration) that blanked the

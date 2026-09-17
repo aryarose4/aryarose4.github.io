@@ -2,13 +2,16 @@
 
 ## User decisions (2026-09-17)
 - Card: ANCHORED near the control being taught when feasible, corner-dock fallback.
-- Lesson 3: REDESIGNED (see below) — the old "shuffle gauge" idea is replaced.
+- Gauge mini-game (7 sliders): MOVED OUT of the tutorial (user, 2026-09-17) —
+  a FUTURE separate "How it works" explainer with its own button next to
+  Tutorial (task #25 in AGENTS.md). See the AGENTS.md plan section; the notes
+  below are kept for that future task.
 - Progress: session-only, NO localStorage. Exit restores free-play default state
   (r = 0.25, default beta, ALL controls enabled, stratum left) and discards progress.
 - Narrow layouts: bottom dock under ~700px (container width, same threshold style
   as the beta grid).
 
-## Lesson 3 (user-specified mini-game, replaces the shuffle-gauge demo)
+## Gauge mini-game (now task #25, "How it works" explainer)
 User words: "I want to start with a stable polygon (like a simple one in the
 ansatz we used for the solve) and have the user try to find a *complex* gauge
 transformation to solve the equations using sliders. An edge should become
@@ -48,9 +51,21 @@ residual split per edge) settle at build time.
   :1234, writePolygonGeometry :1169, morph state :1040 + morphBlend :1209.
 
 ## Milestones
-1. Tutorial button + control-gating registry + tutorial.js state machine +
-   card (anchored / dock fallback / bottom dock <700px) + lessons 0-2.
-2. Lesson 3 gauge game (7 sliders, per-edge highlight, give-up solver fill-in).
-3. Lessons 4-7 + polish. Full suite must stay green after every milestone;
-   stub harness (DOM/THREE, /tmp, uncommitted) must run activate() end to end
-   incl. tutorial enter/exit mid-lesson and exit mid-morph/mid-stratum.
+1. DONE (2026-09-17): Tutorial button + control-gating registry + tutorial.js
+   state machine + card (anchored / dock fallback / bottom dock <700px) +
+   lessons 0-2. Stub harness rebuilt in /tmp/kilo/hx; full suite green.
+2. DONE (2026-09-17): gauge lesson (old #3) DROPPED per user — phi stays
+   gated until the recap, lessons renumbered 0-6 — and lesson 3
+   (beta/chamber) implemented: drag a beta slider to a red-zone end until
+   an inequality box turns amber; unlocks Cross Wall + lim; CARD DOCKING
+   FIX: the card docks below the anchor's OWNING panel (Moduli
+   Coordinates / Parameters) with the container's bottom padding reserved
+   to the card height, so it never covers a control. Stub harness extended
+   (panel-dock placement, padding reserve/release, beta-wall task) + green;
+   full suite exit 0.
+3. Lessons 4-6 (wall-crossing, strata, free play) — placeholders.
+4. "How it works" explainer = the gauge mini-game (task #25, separate).
+
+Full suite must stay green after every milestone; the stub harness (DOM/THREE,
+/tmp, uncommitted) must run activate() end to end incl. tutorial enter/exit
+mid-lesson and exit mid-morph/mid-stratum.

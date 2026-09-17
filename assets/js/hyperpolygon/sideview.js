@@ -544,9 +544,9 @@ function pairSine(edges, a, b) {
 //   extHi      — highlighted (active) exterior sphere / stratum color
 //                (default 0xffffff)
 //   dot        — black dot color (default 0x000000)
-//   parab      — REMOVED 2026-09-15 (task 3): both paraboloids are now
-//                grey/white — sphereGrey while not climbed, sphere once
-//                the dot climbs them
+//   parab      — REMOVED 2026-09-15 (task 3); since 2026-09-17 the central
+//                paraboloid uses the ext palette exactly like the stratum
+//                paraboloid (user request: match the exterior treatment)
 //   arc        — guide-arc color (default 0x808080)
   //   border     — CSS color for the host border (default "#cfd4da")
 //   caption    — reserved for future labels; accepted, currently unused
@@ -658,9 +658,13 @@ export function makeSideView(host, opts) {
     scene.add(mesh);
     return { pos: pos, geom: geom, mesh: mesh };
   }
-  // Paraboloid materials (spec 1): the same two states as the spheres —
-  // unhighlighted 0.32 (grey base), highlighted 0.92 (sphere white).
-  const paraMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b0, transparent: true, opacity: EXT_UNHI_OPACITY, side: THREE.DoubleSide, depthWrite: false });
+  // Central-paraboloid material (user request 2026-09-17: match the
+  // exterior/stratum paraboloids' appearance) — the SAME treatment as
+  // stratMat: single-sided (FrontSide; the old DoubleSide shaded the
+  // far side through the surface and produced odd shading artifacts)
+  // Lambert surface in the ext palette, lerping to the highlight on
+  // climb. Same two opacities as the spheres.
+  const paraMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: EXT_UNHI_OPACITY, side: THREE.FrontSide, depthWrite: false });
   const para = makeParaMesh(paraMat);
   const paraMesh = para.mesh;
   // Stratum material (2026-09-16): styled EXACTLY like the exterior spheres —
@@ -712,7 +716,7 @@ export function makeSideView(host, opts) {
     const p = pal();
     centralMat.color.setHex(p.sphere);
     dotMat.color.setHex(p.dot);
-    paraMat.color.setHex(p.sphereGrey);
+    paraMat.color.setHex(p.ext);
     arcMat.color.setHex(p.dot);
     extHiCol.setHex(p.extHi);
     sphereCol.setHex(p.sphere);
@@ -920,8 +924,8 @@ export function makeSideView(host, opts) {
     // click). Same ~80 ms lag for the highlight. Task 5: a captured
     // central branch scales the ghost by the capture weight, so the tip
     // paraboloid fades in with the sphere capture rather than at the
-    // exact branch switch. Task 3: grey/white — the mesh lerps from
-    // sphereGrey (not climbed) to the sphere white with stratGlow.
+    // exact branch switch. The mesh lerps from the ext base to the
+    // highlight (extHi) with stratGlow.
     const stratGlowTarget = lastState && lastState.kind === "stratum" ? 1 : 0;
     stratGlow += (stratGlowTarget - stratGlow) * (1 - Math.exp(-dt / 0.08));
     let stratGhost = 0;
@@ -943,14 +947,14 @@ export function makeSideView(host, opts) {
       stratMesh.visible = false;
     }
 
-    // Central paraboloid (task 3 + spec 1): the same two states —
-    // unhighlighted (preview at t = 0) to highlighted (the dot climbing
-    // it), handed over by (1 - capture weight) to the captured exterior
-    // sphere continuously.
+    // Central paraboloid: the same two states as the exterior/stratum
+    // paraboloids — ext base unhighlighted, lerping to the highlight on
+    // climb — handed over by (1 - capture weight) to the captured
+    // exterior sphere continuously.
     const showPara = lastShowParab && lastState && lastState.paraboloid !== null;
     const paraClimbTarget = showPara && lastT > 1e-9 ? 1 : 0;
     paraClimb += (paraClimbTarget - paraClimb) * (1 - Math.exp(-dt / 0.08));
-    paraMat.color.setHex(p.sphereGrey).lerp(sphereCol, paraClimb);
+    paraMat.color.setHex(p.ext).lerp(extHiCol, paraClimb);
     paraMat.opacity =
       (EXT_UNHI_OPACITY + (EXT_WHITE_OPACITY - EXT_UNHI_OPACITY) * paraClimb) * (1 - capW);
     paraMesh.visible = !!showPara;

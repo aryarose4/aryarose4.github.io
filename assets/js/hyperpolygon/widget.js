@@ -2193,6 +2193,14 @@ function activate(container) {
         syncBetaSliders: syncBetaSliders,
         scheduleSolve: scheduleSolve,
         chamberBoxes: chamberBoxes,
+        // chamber bookkeeping for the beta lesson (live references —
+        // crossWall/resetChamber mutate the same array)
+        chamberShorts: chamberShorts,
+        chamberInterval: chamberInterval,
+        // the two control panels, for the lesson card's docking (the card
+        // docks BELOW the anchor's owning panel, never over a control)
+        moduliBox: moduliBox,
+        paramsCard: paramsCard,
         crossWall: crossWall,
         limBtn: limBtn,
         enterStratum: enterStratum,
