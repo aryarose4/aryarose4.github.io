@@ -14,6 +14,7 @@ import {
 import { makeOrientor } from "./orientation.js";
 import { shortSubsets, chamberInterval, applyBetaDrag, breakingSubsets } from "./chambers.js";
 import { makeSideView, probeExteriorMap, attachmentRs, PERM, CAP_NEAR_INF_W, PARALLEL_TOL } from "./sideview.js";
+import { makeTutorial } from "./tutorial.js";
 
 const T_SOLVE_MAX = 0.99;
 // Stratum-mode lim-button band (user request 2026-09-15): while the
@@ -346,6 +347,48 @@ function ensureSliderStyles() {
     "#hyperpolygon-widget .hp-slider:disabled {",
     "  opacity: 0.4;",
     "}",
+    // tutorial control gating (task 24, milestone 1): a gated control group
+    // is dimmed and inert; the active lesson's control gets an accent ring
+    "#hyperpolygon-widget .hp-gated {",
+    "  opacity: 0.35 !important;",
+    "  pointer-events: none;",
+    "}",
+    "#hyperpolygon-widget .hp-tut-hilite {",
+    "  outline: 2px solid var(--hp-amber);",
+    "  outline-offset: 2px;",
+    "}",
+    // tutorial lesson card (task 24): a small floating explainer anchored
+    // inside the widget container (near the control being taught, corner /
+    // bottom dock as fallback)
+    "#hyperpolygon-widget .hp-tut-card {",
+    "  position: absolute;",
+    "  z-index: 30;",
+    "  box-sizing: border-box;",
+    "  max-width: 340px;",
+    "  padding: 10px 12px;",
+    "  border: 1px solid var(--hp-box-bd);",
+    "  border-radius: 10px;",
+    "  background: var(--hp-tut-bg);",
+    "  color: var(--hp-box-tx);",
+    "  font-size: 0.85em;",
+    "  line-height: 1.45;",
+    "  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);",
+    "}",
+    "#hyperpolygon-widget .hp-tut-title {",
+    "  font-weight: 600;",
+    "  margin-bottom: 4px;",
+    "}",
+    "#hyperpolygon-widget .hp-tut-task {",
+    "  margin-top: 6px;",
+    "  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;",
+    "  font-size: 0.95em;",
+    "}",
+    "#hyperpolygon-widget .hp-tut-row {",
+    "  display: flex;",
+    "  flex-wrap: wrap;",
+    "  gap: 6px;",
+    "  margin-top: 8px;",
+    "}",
     // section labels: the header of every panel ("MODULI COORDINATES",
     // "PARAMETERS", ...) — small caps, one consistent style
     "#hyperpolygon-widget .hp-sec-label {",
@@ -430,6 +473,7 @@ function ensureSliderStyles() {
     "  --hp-yellow-bg: #f6ecc2;",
     "  --hp-yellow-tx: #7a5c00;",
     "  --hp-pair-bg: rgba(255, 255, 255, 0.72);",
+    "  --hp-tut-bg: rgba(255, 255, 255, 0.94);",
     "}",
     '[data-theme="dark"] #hyperpolygon-widget {',
     "  --hp-red: #6b3630;",
@@ -448,6 +492,7 @@ function ensureSliderStyles() {
     "  --hp-yellow-bg: #453a19;",
     "  --hp-yellow-tx: #e8c84a;",
     "  --hp-pair-bg: rgba(20, 24, 30, 0.6);",
+    "  --hp-tut-bg: rgba(18, 22, 28, 0.94);",
     "}",
   ].join("\n");
   document.head.appendChild(style);
@@ -455,6 +500,9 @@ function ensureSliderStyles() {
 
 function activate(container) {
   ensureSliderStyles();
+  // the tutorial card (task 24) and any future overlay position absolutely
+  // against the widget container
+  container.style.position = "relative";
   // symplectic parameters beta; the beta sliders stay inside ONE stability
   // chamber, fixed at load (chamber model: chambers.js). beta_1 starts at
   // 0.4 (user request 2026-09-15).
@@ -465,6 +513,10 @@ function activate(container) {
   // never crossed), so dragging can never change the chamber; the amber
   // box highlight is the hook for the planned per-inequality "flop".
   const chamberShorts = shortSubsets(beta);
+  // event bus (task 24, milestone 1): tutorial.js subscribes here; the
+  // arrays stay empty (zero per-frame cost) until a tutorial is entered.
+  // Declared this early so every fire site below sees it (TDZ discipline).
+  const hooks = { onCrossWall: [], onStratum: [], onFrame: [], onSide: [] };
   // which chamberShorts pair slot attaches at each exterior-sphere point
   // (south, equator, north): measured once at load from the polygon
   // parallelism at the three attachment points (sideview.js). By the
@@ -527,7 +579,16 @@ function activate(container) {
   const matLabel = document.createElement("div");
   matLabel.className = "hp-sec-label";
   matLabel.textContent = "Solved pair";
+  // tutorial button (task 24): floated right inside the matrix panel's
+  // header — top-right "near the widget header", never gated
+  const tutBtn = document.createElement("button");
+  tutBtn.type = "button";
+  tutBtn.className = "hp-btn";
+  tutBtn.textContent = "Tutorial";
+  tutBtn.style.float = "right";
+  tutBtn.title = "guided introduction to the moduli-space widget";
   matBox.appendChild(matLabel);
+  matBox.insertBefore(tutBtn, matLabel);
   const matRow = document.createElement("div");
   matRow.style.display = "flex";
   matRow.style.flexWrap = "wrap";
@@ -1610,6 +1671,7 @@ function activate(container) {
     limBtn.title = "leave the I-stratum (t jumps back to infinity on the exterior sphere)";
     scheduleSolve();
     refreshSide();
+    hooks.onStratum.forEach((f) => f(true));
   }
   function leaveStratum() {
     stratum = null;
@@ -1630,6 +1692,7 @@ function activate(container) {
     limBtn.title = "enter the I-stratum (the tip of this exterior sphere)";
     scheduleSolve();
     refreshSide();
+    hooks.onStratum.forEach((f) => f(false));
   }
   limBtn.addEventListener("click", () => {
     if (stratum) leaveStratum();
@@ -1667,6 +1730,7 @@ function activate(container) {
     // exit button ("lim t->0") shows only when the t slider is near 0.
     const nearT0 = parseFloat(tInput.value) <= LIM_T0_BAND;
     limBtn.style.display = (stratum ? nearT0 : !!(st && st.nearInfinity)) ? "" : "none";
+    hooks.onSide.forEach((f) => f(lastSideState));
   }
   function setTHover(on) {
     if (tHover === on) return;
@@ -2036,9 +2100,112 @@ function activate(container) {
     rebuildChamberBoxes();
     syncBetaSliders();
     scheduleSolve();
+    hooks.onCrossWall.forEach((f) => f(k));
+  }
+
+  // tutorial exit (task 24): restore the load-time chamber for the default
+  // beta tuple (Cross Wall may have flopped chamberShorts; the chamber is
+  // recomputed from the restored beta and every dependent display syncs)
+  function resetChamber() {
+    const sh = shortSubsets(beta);
+    for (let k = 0; k < chamberShorts.length; k++) chamberShorts[k] = sh[k];
+    fillExtMap();
+    rebuildPairList();
+    rebuildChamberBoxes();
+    syncBetaSliders();
   }
 
   syncBetaSliders();
+
+  // Control-gating registry (task 24, milestone 1): every interactive
+  // control group registers with its interactive element(s); tutorial.js
+  // drives the enable-set through setGate. enableSet === null means ALL
+  // enabled (free play). Ordered TDZ-safely: every referenced symbol is
+  // declared above this line.
+  const gated = [
+    { id: "r", els: [rInput, rInput.parentNode] },
+    { id: "theta", els: [thetaInput, thetaInput.parentNode] },
+    { id: "t", els: [tInput, tInput.parentNode] },
+    { id: "phi", els: [phiInput, phiInput.parentNode] },
+    { id: "beta0", els: [betaInputs[0], betaInputs[0].parentNode] },
+    { id: "beta1", els: [betaInputs[1], betaInputs[1].parentNode] },
+    { id: "beta2", els: [betaInputs[2], betaInputs[2].parentNode] },
+    { id: "beta3", els: [betaInputs[3], betaInputs[3].parentNode] },
+    { id: "lim", els: [limBtn] },
+    { id: "sl", els: [slDetails] },
+    { id: "cross", els: chamberBoxes.map((b) => b.btn) },
+  ];
+  let lastGateKey = null;
+  let lastGateHilite = undefined;
+  function setGate(enableSet, highlightId) {
+    // cheap no-op when the gate state is unchanged (repeated calls from a
+    // per-frame tick must not rewrite the DOM)
+    const key =
+      enableSet === null ? "ALL" : enableSet.slice().sort().join(",");
+    if (key === lastGateKey && highlightId === lastGateHilite) return;
+    lastGateKey = key;
+    lastGateHilite = highlightId === undefined ? null : highlightId;
+    for (let i = 0; i < gated.length; i++) {
+      const g = gated[i];
+      const on = enableSet === null || enableSet.indexOf(g.id) !== -1;
+      for (let j = 0; j < g.els.length; j++) {
+        const el = g.els[j];
+        el.classList.toggle("hp-gated", !on);
+        const tag = el.tagName;
+        if (tag === "INPUT" || tag === "BUTTON" || tag === "SELECT") {
+          el.disabled = !on;
+        }
+      }
+    }
+    for (let i = 0; i < gated.length; i++) {
+      const g = gated[i];
+      const h = g.id === lastGateHilite;
+      for (let j = 0; j < g.els.length; j++) {
+        g.els[j].classList.toggle("hp-tut-hilite", h && j === 0);
+      }
+    }
+  }
+  setGate(null, null);
+
+  // Tutorial (task 24, milestone 1): instantiated ONLY on the button click
+  // — nothing tutorial-related binds or renders before that. tutorial.js
+  // owns the lesson state machine and the exit cleanup; the button toggles
+  // enter/exit and is never gated.
+  let tutorial = null;
+  tutBtn.addEventListener("click", () => {
+    if (tutorial) {
+      tutorial.exit();
+      tutorial = null;
+      tutBtn.textContent = "Tutorial";
+      return;
+    }
+    tutorial = makeTutorial({
+      container: container,
+      hooks: hooks,
+      setGate: setGate,
+      controls: {
+        rInput: rInput,
+        thetaInput: thetaInput,
+        tInput: tInput,
+        phiInput: phiInput,
+        beta: beta,
+        betaInputs: betaInputs,
+        syncBetaSliders: syncBetaSliders,
+        scheduleSolve: scheduleSolve,
+        chamberBoxes: chamberBoxes,
+        crossWall: crossWall,
+        limBtn: limBtn,
+        enterStratum: enterStratum,
+        leaveStratum: leaveStratum,
+        stratumRef: () => stratum,
+        resetChamber: resetChamber,
+        defaultR: 0.25,
+        defaultBeta: [0.4, 0.5, 0.5, 0.25],
+      },
+    });
+    tutorial.enter();
+    tutBtn.textContent = "Exit tutorial";
+  });
 
   function resize() {
     const w = canvasBox.clientWidth;
@@ -2108,6 +2275,11 @@ function activate(container) {
         view.controls.update();
         view.renderer.render(view.scene, view.camera);
       }
+    }
+    // tutorial frame hooks (task 24): guarded plain loop — no cost while
+    // the array is empty (no per-frame forEach allocation)
+    if (hooks.onFrame.length > 0) {
+      for (let i = 0; i < hooks.onFrame.length; i++) hooks.onFrame[i]();
     }
   }
   loop();

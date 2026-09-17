@@ -466,6 +466,97 @@ fragility remain.)
 - After any solver change: re-run run-validation.sh. Historical paths
   (star-3, cycle-0, default STAR ansatz) must stay bit-exact.
 
+## Tutorial plan (OUTLINE ONLY — not built; see task #24)
+
+Game-like tutorial for the widget. Start state: everything greyed out
+except the r and theta sliders; each lesson is a pop-up explainer plus
+a small task whose completion unlocks the next control group.
+Educational targets, in teaching order: (1) what a moduli space is
+(points = gauge-inequivalent stable pairs; sliders are coordinates),
+(2) Kempf–Ness — every stable representation is gauge-equivalent to
+the unique moment-map-balanced representative the display shows,
+(3) wall-crossing (stability chambers, the flop, strata). NOTHING
+tutorial-related renders or binds until the user clicks a "Tutorial"
+button (placement: near the widget header — decide at build time).
+
+Entry / exit / mechanics (display-layer only):
+- `assets/js/hyperpolygon/tutorial.js` — new dependency-free module,
+  statically imported by widget.js, instantiated ONLY on button click.
+  Owns a lesson state machine + per-lesson task predicates; drives the
+  gating; subscribes to existing widget events (slider input events,
+  Cross Wall handler, stratum enter/leave, flowState `att`) — no
+  solver coupling whatsoever.
+- Lesson card: small floating card anchored near the control being
+  taught where feasible (fallback: fixed corner dock); Next/Back/Skip
+  + Exit. Exit (offered at every step) restores the free-play default
+  state (r = 0.25, default beta, ALL controls enabled, stratum mode
+  left) and discards progress (session-only; no localStorage unless
+  asked).
+- widget.js gains a control-gating registry: every interactive control
+  (r/theta/t/phi sliders, four beta sliders, Cross Wall, lim t→∞,
+  SL(2,C) details) registers; the tutorial drives an enable-set.
+  Disabled = opacity ~0.35 + pointer-events none; the active lesson's
+  control gets a highlight ring. Views stay LIVE throughout (polygon,
+  side view, matrix readout keep rendering — they ARE the teaching
+  content). No default-state behavior changes; full suite must stay
+  green.
+
+Lesson sequence (explainer -> task -> unlock):
+0. Welcome — what the widget shows: ONE point of the moduli space.
+   Controls: r, theta only.
+1. The moduli space is a space — task: sweep r 0.25 -> 0.5 (side-view
+   dot rides the central sphere; polygon reshapes), then theta to 0.
+   Teaches: each (r, theta) labels one gauge-inequivalent stable pair;
+   sliding = walking the moduli space. Unlocks t.
+2. The t direction — task: drag t 0 -> 0.99 (polygon inflates ~
+   1/(1-t); the dot climbs its paraboloid). Teaches: t sets the
+   relative scale of y (the t/(1-t) prescription), the "infinity"
+   readout, why the solve clamps at T_SOLVE_MAX. Unlocks phi.
+3. Gauge freedom & the moment map (target 2) — task: sweep phi and
+   observe the su(2) polygon + residual caption DO NOT move (only the
+   matrix readout rotates, y -> e^{i·phi} y). Teaches: the display
+   always shows the UNIQUE balanced representative; every stable
+   representation is gauge-equivalent to it. Optional tutorial-only
+   demo (decide at build time): "shuffle gauge" applies a random
+   U(2) x U(1)^4 gauge to the DISPLAYED pair (readout goes wild,
+   residuals unchanged), then re-balances and morphs back to the
+   canonical polygon — reuse the task-21 Kabsch/morph machinery,
+   display-only. Unlocks the beta panel.
+4. Stability data: beta & the chamber — task: drag one beta slider
+   until an inequality box turns amber (the chamber-lock clamp keeps
+   the tuple ON the wall; crossing NOT explained yet). Teaches: beta
+   are stability data, the seven inequalities, a chamber is a
+   connected component, why drags are clamped. Unlocks Cross Wall +
+   stratum entry.
+5. Wall-crossing (target 3) — task: press Cross Wall on the amber
+   box; the short-pair list swaps (pair -> complement) and the
+   polygon rearranges at FIXED beta. Teaches: at a wall two legs
+   become parallel; adjacent chambers are different moduli spaces
+   glued along a shared stratum; the flop changes the chamber at the
+   same tuple.
+6. Strata & the side view — task: snap to an attachment at t >= 0.9,
+   press lim t→∞, watch the dot climb the stratum paraboloid, leave
+   via t back to ~0. Teaches: the exterior spheres are the
+   wall-crossing partners; the stratum stick is the doubly-parallel
+   degenerate representation approached as t -> infinity.
+7. Free play / recap — everything unlocked; recap card ties the three
+   targets together; optional mini-challenges (find a wall from a
+   random chamber; enter a stratum; sweep phi after a gauge shuffle).
+
+Build-time gotchas & open decisions:
+- Touching widget setup order = the TDZ hazard: re-create the DOM/THREE
+  stub harness (/tmp, not committed) and run activate() end-to-end
+  incl. tutorial enter/exit mid-lesson, exit mid-morph, exit while in
+  stratum mode.
+- Lesson text must not contradict the accepted known issues (⚠
+  degraded captions, theta=0 stall basin, on-wall chart mismatch):
+  lessons use generic points and moderate t; do not promise
+  wall-adjacent smoothness.
+- Open: card anchoring vs corner dock; whether the shuffle-gauge demo
+  is in scope (the most compelling Kempf–Ness demo, but careful
+  display-layer work; phi-only is the fallback); progress persistence;
+  one-column/mobile behavior of the card.
+
 ## Task list
 
 Tracked work items; keep statuses updated.
@@ -684,6 +775,10 @@ Tracked work items; keep statuses updated.
     absorption + TARGET_STEP_PSI servo re-anchor; measured rigid gauge
     jumps: 0.0000 pose motion vs 0.5-1.1 rad before, 0 fires on
     continuous paths; orient battery 6/6 green; full suite exit 0).
+24. TODO: game-like tutorial mode — implement the Tutorial plan section
+    above (Tutorial button -> tutorial.js state machine, widget-side
+    control-gating registry, lessons 0-7). Do NOT start without the
+    user asking; settle the open decisions first.
 
 ## Status / next milestone
 
