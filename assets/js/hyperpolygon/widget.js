@@ -579,16 +579,7 @@ function activate(container) {
   const matLabel = document.createElement("div");
   matLabel.className = "hp-sec-label";
   matLabel.textContent = "Solved pair";
-  // tutorial button (task 24): floated right inside the matrix panel's
-  // header — top-right "near the widget header", never gated
-  const tutBtn = document.createElement("button");
-  tutBtn.type = "button";
-  tutBtn.className = "hp-btn";
-  tutBtn.textContent = "Tutorial";
-  tutBtn.style.float = "right";
-  tutBtn.title = "guided introduction to the moduli-space widget";
   matBox.appendChild(matLabel);
-  matBox.insertBefore(tutBtn, matLabel);
   const matRow = document.createElement("div");
   matRow.style.display = "flex";
   matRow.style.flexWrap = "wrap";
@@ -705,7 +696,16 @@ function activate(container) {
   const moduliLabel = document.createElement("div");
   moduliLabel.className = "hp-sec-label";
   moduliLabel.textContent = "Moduli Coordinates";
+  // tutorial button (user request 2026-09-18): floated right inside the
+  // Moduli Coordinates panel's header — top-right of that panel, never gated
+  const tutBtn = document.createElement("button");
+  tutBtn.type = "button";
+  tutBtn.className = "hp-btn";
+  tutBtn.textContent = "Tutorial";
+  tutBtn.style.float = "right";
+  tutBtn.title = "guided introduction to the moduli-space widget";
   moduliBox.appendChild(moduliLabel);
+  moduliBox.insertBefore(tutBtn, moduliLabel);
   const modRowRT = document.createElement("div");
   modRowRT.style.display = "flex";
   modRowRT.style.flexWrap = "wrap";
@@ -786,12 +786,13 @@ function activate(container) {
   paramsCard.appendChild(paramsLabel);
   rightCol.appendChild(paramsCard);
 
-  // SL(2,C) view (task 2): the real and imaginary parts of the traceless
-  // central moment map polygon (mu_SL, 3 + 3 = 6 real dimensions), drawn
-  // as two small three.js canvases inside one collapsible panel. Collapsed
-  // by default; the summary toggles it. The phase phi (the slider under t)
-  // acts on y itself (updatePhiViews) — the rotation of these polygons is
-  // the byproduct; the su(2) polygon is unaffected.
+  // SL(2,C) view (task 2): the SL(2,C) polygon's traceless matrices split
+  // into their self-adjoint (Hermitian) and skew-adjoint (anti-Hermitian,
+  // identified with Hermitian matrices via -i) parts, each drawn as a small
+  // three.js canvas inside one collapsible panel. Collapsed by default; the
+  // summary toggles it. The phase phi (the slider under t) acts on y itself
+  // (updatePhiViews) — the rotation of these two components is the
+  // byproduct; the su(2) polygon is unaffected.
   const slDetails = document.createElement("details");
   slDetails.className = "hp-panel";
   const slSummary = document.createElement("summary");
@@ -899,18 +900,22 @@ function activate(container) {
       },
     };
   }
-  const slRe = makeSlView("Re \u03bc\u209b\u2097");
-  const slIm = makeSlView("Im \u03bc\u209b\u2097");
+  const slRe = makeSlView("Self-adjoint \u03bc\u209b\u2097");
+  const slIm = makeSlView("Skew-adjoint \u03bc\u209b\u2097");
   // phi = 0 base data from the last solve: sl2Base = res.sl2 (the SL(2,C)
-  // polygon) and solvedY = res.y (the solved pair's y matrix). The phi
-  // slider acts on y ITSELF — y -> e^{i·phi} y, every entry scaled by the
-  // unit complex number e^{i·phi} (user request 2026-09-15): the y matrix
-  // readout shows the rotated entries, and because u_i = x_col_i · y_row_i
-  // is linear in y, the SL(2,C) polygon rotates coordinatewise by
-  // e^{i·phi} as a BYPRODUCT — the old "rotate the polygons directly"
-  // display hack is gone. The su(2) polygon is untouched (|y|^2 and y†y
-  // are phase-invariant) and the moment-map residuals are unchanged. At
-  // phi = 0 the rotation is bit-exact (cos 0 = 1, sin 0 = 0).
+  // polygon as complex coordinate 3-vectors, stored as its real/imag parts)
+  // and solvedY = res.y (the solved pair's y matrix). The phi slider acts on
+  // y ITSELF — y -> e^{i·phi} y, every entry scaled by the unit complex
+  // number e^{i·phi} (user request 2026-09-15): the y matrix readout shows
+  // the rotated entries, and because u_i = x_col_i · y_row_i is linear in y,
+  // the SL(2,C) matrices rotate coordinatewise by e^{i·phi} as a BYPRODUCT.
+  // The displayed views show the SELF-ADJOINT and SKEW-ADJOINT components of
+  // each matrix (user request 2026-09-18): under the phase rotation they mix
+  // as a plane rotation A' = cos(phi) A - sin(phi) K, K' = sin(phi) A +
+  // cos(phi) K, exactly like Re/Im but in the adjoint splitting. The su(2)
+  // polygon is untouched (|y|^2 and y†y are phase-invariant) and the
+  // moment-map residuals are unchanged. At phi = 0 the rotation is bit-exact
+  // (cos 0 = 1, sin 0 = 0).
   let sl2Base = null;
   let solvedY = null;
   const SL_SEG_ENDS = [
@@ -920,9 +925,35 @@ function activate(container) {
     [3, 4],
     [4, 0],
   ];
+  // Adjoint splitting of the SL(2,C) polygon. Each vertex is the traceless
+  // matrix U = [[z2, z1], [z3, -z2]] with the solver's coordinate vector
+  // (z1, z2, z3) stored as real/imag parts. With U = A + iK (A Hermitian
+  // = self-adjoint, K Hermitian; B = iK is the skew-adjoint part), the
+  // solver's su(2)^* functionals (1/2 Re Tr(i b_k . M)) applied to A and K
+  // give the real 3-vectors drawn in the two canvases:
+  //   self[k] = (-(Re z1 + Re z3)/2, (Im z1 - Im z3)/2, -Re z2)
+  //   skew[k] = (-(Im z1 + Im z3)/2, (Re z3 - Re z1)/2, -Im z2)
+  // Under y -> e^{i phi} y every U -> e^{i phi} U, so the two components mix
+  // by a plane rotation: A' = cos A - sin K, K' = sin A + cos K.
+  function sl2Adjoint(sl2) {
+    const self = [];
+    const skew = [];
+    for (let k = 0; k < 5; k++) {
+      const z1r = sl2.real[k][0];
+      const z1i = sl2.imag[k][0];
+      const z2r = sl2.real[k][1];
+      const z2i = sl2.imag[k][1];
+      const z3r = sl2.real[k][2];
+      const z3i = sl2.imag[k][2];
+      self.push([-(z1r + z3r) / 2, (z1i - z3i) / 2, -z2r]);
+      skew.push([-(z1i + z3i) / 2, (z3r - z1r) / 2, -z2i]);
+    }
+    return { self: self, skew: skew };
+  }
   // Apply the current phi to the two things it acts on: the y matrix
   // readout (entrywise rotation by e^{i·phi}) and the SL(2,C) canvases
-  // (the byproduct). Never triggers a solver run.
+  // (self-adjoint / skew-adjoint components, coupled by the plane
+  // rotation). Never triggers a solver run.
   function updatePhiViews() {
     const g = parseFloat(phiInput.value) * Math.PI;
     const c = Math.cos(g);
@@ -935,14 +966,15 @@ function activate(container) {
       );
     }
     if (!sl2Base) return;
+    const adj = sl2Adjoint(sl2Base);
     for (let vi = 0; vi < 2; vi++) {
       const view = vi === 0 ? slRe : slIm;
-      const isIm = vi === 1;
+      const isSkew = vi === 1;
       for (let k = 0; k < 5; k++) {
         for (let j = 0; j < 3; j++) {
-          const re = sl2Base.real[k][j];
-          const im = sl2Base.imag[k][j];
-          view.markPos[k * 3 + j] = isIm ? s * re + c * im : c * re - s * im;
+          const a = adj.self[k][j];
+          const b = adj.skew[k][j];
+          view.markPos[k * 3 + j] = isSkew ? s * a + c * b : c * a - s * b;
         }
       }
       for (let si = 0; si < SL_SEG; si++) {
@@ -976,7 +1008,9 @@ function activate(container) {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-  camera.position.set(1.6, 1.1, 1.9);
+  // initial zoom-out (user request 2026-09-18): 1.5x the old distance so
+  // the moduli-space view starts with more headroom
+  camera.position.set(2.4, 1.65, 2.85);
 
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -2183,11 +2217,20 @@ function activate(container) {
       container: container,
       hooks: hooks,
       setGate: setGate,
+      // exit-label + toggle-state sync (user request 2026-09-18): any exit
+      // path from inside the tutorial (the card's Exit button included)
+      // resets this button's label AND the toggle state, so the next click
+      // starts a fresh tutorial instead of re-exiting the dead one
+      onExit: () => {
+        tutBtn.textContent = "Tutorial";
+        tutorial = null;
+      },
       controls: {
         rInput: rInput,
         thetaInput: thetaInput,
         tInput: tInput,
         phiInput: phiInput,
+        slDetails: slDetails,
         beta: beta,
         betaInputs: betaInputs,
         syncBetaSliders: syncBetaSliders,

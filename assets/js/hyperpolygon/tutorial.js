@@ -15,8 +15,7 @@
 //   4 phi — the gauge phase on y; the polygon does not move.
 //   5 Stability data — drag a beta slider to a chamber wall (amber box).
 //   6 Wall-crossing — Cross Wall (locked until THIS lesson) at a wall.
-//   7 Strata — lim t->infinity entry, climb, leave (lim locked until here).
-//   8 Free play / recap — everything unlocked.
+//   7 Free play / recap — everything unlocked.
 //
 // Card docking (user request 2026-09-17: the card must never block the
 // sliders a task needs): the card docks BELOW the anchor's OWNING panel —
@@ -44,82 +43,91 @@ export function makeTutorial(ctx) {
   // (called on every entry, incl. Back). Every lesson that has a task gates
   // Next on it (tasks 2-3, 2026-09-17); Skip is gone — progression requires
   // completion. Cross Wall stays locked until the wall-crossing lesson
-  // (user request 4), lim until the strata lesson.
+  // (user request 4); lim only where its lesson includes it (r1).
   const LESSONS = [
     {
       id: "welcome",
       title: "Welcome",
       body:
-        "This widget shows ONE point of a moduli space: the matrices x, y " +
-        "are a stable pair, balanced by the moment map. The sliders are " +
-        "coordinates on that space. Only r and \u03b8 are unlocked for now.",
-      controls: ["r", "theta"],
-      highlight: "r",
+        "The right panel shows the whole moduli space, with the current " +
+        "position marked by the black dot. The left panel displays the " +
+        "polygon corresponding to the current position. The four sliders " +
+        "parameterize the four-dimensional space.  We'll begin wiht r and \u03b8.",
+      // user request 2026-09-18: ALL sliders disabled during the welcome
+      // lesson (lockAll short-circuits the gate before the unlocked union)
+      lockAll: true,
+      controls: null,
+      highlight: null,
       anchor: "r",
       task: null,
     },
     {
       id: "space",
-      title: "The moduli space is a space",
+      title: "The central sphere",
       body:
-        "Each (r, \u03b8) labels one point: sliding them walks the moduli " +
-        "space. Drag r up to 0.5, then bring \u03b8 to 0.",
+        "With the t slider fixed to 0, we are restricted to <em>polygon space</em> " +
+        "with no telescoping edges. Play around with the sliders, and when " +
+        "you're ready to continue bring \u03b8 to 0 and r between 0 and 0.5.",
       controls: ["r", "theta"],
       highlight: "r",
       anchor: "r",
-      task: "sweep",
-      predicate: (c) =>
-        parseFloat(c.rInput.value) >= 0.49 && Math.abs(parseFloat(c.thetaInput.value)) <= 0.01,
+      task: "0 < r < 0.5 and \u03b8 = 0",
+      predicate: spacePredicate,
     },
     {
       id: "tdir",
-      title: "The t direction",
+      title: "The upward flow",
       body:
-        "Put the dot in a generic position (nudge r or \u03b8 off the " +
-        "attachments 0, 0.5, 1 if you are on one), then scale t up to " +
-        "0.99: the polygon inflates and the dot climbs its paraboloid.",
+        "The t slider telescopes the polygon's edges while keeping it balanced. " +
+        "Geometrically, t parameterizes the gradient flow of the Morse function. " +
+        "Try moving this slider, and see how it interacts with the r and \u03b8 sliders. ",
       controls: ["r", "theta", "t"],
       highlight: "t",
       anchor: "t",
       task: "sweep",
-      taskText: "t \u2192 0.99",
-      predicate: (c) => parseFloat(c.tInput.value) >= 0.98,
+      taskText: "t > 0",
+      predicate: (c) => parseFloat(c.tInput.value) > 0,
     },
     {
       id: "r1",
-      title: "Back to zero, then the north pole",
+      title: "Finding critical points",
       body:
-        "Reset t = 0. Then move r all the way to 1 \u2014 the north " +
-        "attachment \u2014 and scale t up again.",
-      controls: ["r", "theta", "t"],
-      highlight: "r",
-      anchor: "r",
+        "There are some polygons for which the t\u2192\u221e limit exists. " +
+        "Reset t = 0 and move r to 1. Then take t to 99 and press the limit " +
+        "button. From there, you can explore the higher energy Morse stratum.",
+      controls: ["r", "theta", "t", "lim"],
+      highlight: "lim",
+      anchor: "lim",
       task: "r1",
       predicate: r1Predicate,
     },
     {
       id: "phi",
-      title: "What \u03c6 does",
+      title: "The \u03c6 slider",
       body:
-        "\u03c6 applies a gauge phase e\u2071\u03c6 to the y matrix itself: " +
-        "watch the y readout rotate while the polygon and the residuals " +
-        "stay put \u2014 the display always shows the unique balanced " +
-        "representative. Swing \u03c6 by at least \u03c0/2.",
-      controls: ["r", "theta", "t", "phi"],
+        "\u03c6 applies a gauge phase e<sup>i\u03c6</sup> to the y matrix. " +
+        "This change is not reflected in the su(2) polygon, but you can see " +
+        "its effect in the sl(2,C) polygon views. Open that panel and try " +
+        "moving \u03c6. Then leave the stratum with the lim t\u21920 button " +
+        "and return to the central sphere: t = 0 with 0 < r < 0.5 and " +
+        "\u03b8 = 0.",
+      controls: ["r", "theta", "t", "phi", "sl", "lim"],
       highlight: "phi",
-      anchor: "phi",
+      anchor: "sl",
       task: "phi",
       predicate: phiPredicate,
     },
     {
       id: "beta",
-      title: "Stability data: \u03b2",
+      title: "The symplectic parameters \u03b2",
       body:
-        "The four \u03b2 sliders are stability data: they decide which " +
-        "representations count as stable. The widget keeps them inside ONE " +
-        "chamber \u2014 drags clamp at a wall, never cross it. Drag any " +
-        "\u03b2 slider to a red-zone end until an inequality turns amber.",
-      controls: ["r", "theta", "t", "beta0", "beta1", "beta2", "beta3"],
+        "The four \u03b2 sliders control the moment map levels, which constrain " +
+        "the polygon edge lengths.  These are not moduli coordinates, but " +
+        "rather parameters <em>defining</em> the moduli space.  There are "+
+        "chamber walls where the moduli space is singular. Try dragging a "+
+        "\u03b2 slider to a red-zone until an inequality turns amber.",
+      controls: ["r", "theta", "t", "sl", "lim", "beta0", "beta1",
+        "beta2", "beta3"],
       highlight: "beta0",
       anchor: "beta0",
       task: "wall",
@@ -129,11 +137,9 @@ export function makeTutorial(ctx) {
       id: "wall",
       title: "Wall-crossing",
       body:
-        "The amber box is a wall of your chamber: there two legs become " +
-        "parallel, and the chambers on either side are different moduli " +
-        "spaces glued along it. Cross Wall flops to the other chamber at " +
-        "the same \u03b2. If no box is amber, drag a \u03b2 slider to a " +
-        "wall first \u2014 then press Cross Wall.",
+        "Pressing the Cross Wall button flops to another chamber.  This changes "+
+        "the list of short subsets and the meaning of stability.  Try entering "+
+        "the interior of another chamber now.",
       controls: ["r", "theta", "t", "beta0", "beta1", "beta2", "beta3", "cross"],
       highlight: "cross",
       anchor: "cross",
@@ -141,64 +147,79 @@ export function makeTutorial(ctx) {
       predicate: crossPredicate,
     },
     {
-      id: "strata",
-      title: "Strata & the side view",
-      body:
-        "Snap to an attachment (r = 0, 0.5 or 1, \u03b8 = 0), raise t past " +
-        "0.9 and press lim t\u2192\u221e: the dot climbs the stratum " +
-        "paraboloid \u2014 the doubly-parallel degenerate pair at " +
-        "t = \u221e. Climb near the rim, then drag t back down to leave.",
-      controls: [
-        "r", "theta", "t", "beta0", "beta1", "beta2", "beta3", "cross", "lim",
-      ],
-      highlight: "lim",
-      anchor: "lim",
-      task: "strata",
-      predicate: strataPredicate,
-    },
-    {
       id: "recap",
       title: "Free play",
       body:
-        "That is the whole picture: (r, \u03b8) move you on the central " +
-        "sphere, t scales the pair toward infinity, \u03b2 picks the " +
-        "chamber, walls connect chambers, and the exterior spheres + strata " +
-        "show the t = \u221e side of it all. Everything is unlocked \u2014 " +
-        "explore freely.",
+        "That's everything! You may now explore freely. See if you can "+
+        "(1) find the meanings of the parallelism indicators in the polygon "+
+        "view, (2) determine why chamber walls correspond to spheres shrinking, "+
+        "and (3) find a chamber wall where the central sphere crunches down.",
       all: true, // free play: every control enabled (setGate(null))
       controls: null,
       highlight: null,
-      anchor: null,
+      anchor: "cross", // keep the card where the wall-crossing lesson had it
     },
   ];
 
   // ---- task predicates (stateful ones keep their state on the lesson
   // object; enterLesson re-inits it) ---------------------------------------
+  // Lesson 1 (user request 2026-09-18): the start point (r = 0.25, θ = 0)
+  // already satisfies the target condition, so the predicate additionally
+  // requires that an available slider MOVED — Next enables only after the
+  // user touches r or θ and the target state holds.
+  function spacePredicate(c) {
+    const st = LESSONS[1];
+    if (st._r0 === undefined) {
+      st._r0 = parseFloat(c.rInput.value);
+      st._th0 = parseFloat(c.thetaInput.value);
+    }
+    const moved =
+      parseFloat(c.rInput.value) !== st._r0 ||
+      parseFloat(c.thetaInput.value) !== st._th0;
+    return (
+      moved &&
+      parseFloat(c.rInput.value) >= 0.2 &&
+      parseFloat(c.rInput.value) <= 0.48 &&
+      Math.abs(parseFloat(c.thetaInput.value)) <= 0.01
+    );
+  }
   function r1Predicate(c) {
     const st = LESSONS[3];
     const t = parseFloat(c.tInput.value);
-    const r = parseFloat(c.rInput.value);
     if (st._phase === undefined) st._phase = 0;
-    if (st._phase === 0 && t <= 0.01) st._phase = 1;
-    if (st._phase === 1 && r >= 0.95) st._phase = 2;
-    return st._phase === 2 && t >= 0.98;
+    if (st._phase === 0 && c.stratumRef()) st._phase = 1;
+    return st._phase === 1 && t > 0.01;
   }
   function phiPredicate(c) {
     const st = LESSONS[4];
-    if (st._start === undefined) st._start = parseFloat(c.phiInput.value);
-    return Math.abs(parseFloat(c.phiInput.value) - st._start) >= 0.5;
+    if (st._phase === undefined) st._phase = 0;
+    if (st._phase === 0) {
+      if (!c.slDetails.open) return false;
+      if (st._start === undefined) st._start = parseFloat(c.phiInput.value);
+      if (Math.abs(parseFloat(c.phiInput.value) - st._start) < 0.5) return false;
+      st._phase = 1;
+    }
+    // phase 1: leave the stratum (lim t→0) and return to the central
+    // sphere: t = 0 with 0 < r < 0.5 and theta = 0 (user request 2026-09-18)
+    if (c.stratumRef()) return false;
+    const r = parseFloat(c.rInput.value);
+    const t = parseFloat(c.tInput.value);
+    const th = parseFloat(c.thetaInput.value);
+    return t <= 0.01 && r > 0.01 && r < 0.49 && Math.abs(th) <= 0.01;
   }
   function crossPredicate(c) {
     const st = LESSONS[6];
     if (st._snap === undefined) st._snap = snapOf(c);
-    return snapOf(c) !== st._snap;
-  }
-  function strataPredicate(c) {
-    const st = LESSONS[7];
+    // user request 2026-09-18: completing the lesson requires BOTH the wall
+    // crossing AND a subsequent slider move away from that wall (the tuple
+    // stays pinned on the wall after the flop — the crossed box stays amber —
+    // so "off the wall" = no amber inequality remains)
     if (st._phase === undefined) st._phase = 0;
-    if (st._phase === 0 && c.stratumRef()) st._phase = 1;
-    if (st._phase === 1 && parseFloat(c.tInput.value) >= 0.8) st._phase = 2;
-    return st._phase === 2 && !c.stratumRef();
+    if (st._phase === 0) {
+      if (snapOf(c) === st._snap) return false;
+      st._phase = 1;
+    }
+    return !anyBreaking();
   }
   function snapOf(c) {
     const s = [];
@@ -245,6 +266,11 @@ export function makeTutorial(ctx) {
   // ---- gating ------------------------------------------------------------
   function applyGate() {
     const L = LESSONS[lesson];
+    if (L.lockAll) {
+      // welcome lesson (user request 2026-09-18): every slider disabled
+      setGate([], null);
+      return;
+    }
     if (L.all) {
       // free play: everything enabled, no highlight (setGate(null) = all)
       setGate(null, null);
@@ -274,14 +300,14 @@ export function makeTutorial(ctx) {
       nextBtn.style.display = "";
       if (L.task) {
         taskEl.style.display = "";
-        if (done) {
+        nextBtn.disabled = !L.predicate(controls);
+        if (!nextBtn.disabled) {
           taskEl.textContent = "Task complete! \u2713";
           taskEl.style.color = "";
         } else {
           taskEl.textContent = "Task: " + liveTaskText();
           taskEl.style.color = "inherit";
         }
-        nextBtn.disabled = !done;
       } else {
         taskEl.style.display = "none";
         nextBtn.disabled = false;
@@ -308,28 +334,39 @@ export function makeTutorial(ctx) {
     if (L.id === "r1") {
       const ph = LESSONS[3]._phase || 0;
       const t = parseFloat(controls.tInput.value);
-      const r = parseFloat(controls.rInput.value);
-      if (ph === 0) return "t = " + t.toFixed(2) + " \u2192 0";
-      if (ph === 1) return "r = " + r.toFixed(2) + " \u2192 1";
-      return "t = " + t.toFixed(2) + " / 0.99";
+      if (ph === 0) return "in stratum mode: " + (controls.stratumRef() ? "\u2713" : "press lim t\u2192\u221e (r at 1, \u03b8 = 0, t \u2265 0.9)");
+      return "move t > 0 from there: t = " + t.toFixed(2);
     }
     if (L.id === "phi") {
-      const v = parseFloat(controls.phiInput.value);
-      const start = LESSONS[4]._start || 0;
-      const d = Math.abs(v - start);
-      return "\u03c6 swept " + ((d * 180) / Math.PI).toFixed(0) + "\u00b0 of 90\u00b0";
+      const ph = LESSONS[4]._phase || 0;
+      if (ph === 0) {
+        if (!controls.slDetails.open) return "open the SL(2,\u2102) panel first";
+        const v = parseFloat(controls.phiInput.value);
+        const start = LESSONS[4]._start || 0;
+        const d = Math.abs(v - start);
+        return "\u03c6 swept " + ((d * 180) / Math.PI).toFixed(0) + "\u00b0 of 90\u00b0";
+      }
+      if (controls.stratumRef()) return "press lim t\u21920 to leave the stratum";
+      const r = parseFloat(controls.rInput.value);
+      const t = parseFloat(controls.tInput.value);
+      const th = parseFloat(controls.thetaInput.value);
+      return (
+        "central sphere: t = " + t.toFixed(2) + " / 0" +
+        (t <= 0.01 ? " \u2713" : "") +
+        "  \u00b7  r = " + r.toFixed(2) + " / < 0.5" +
+        (r > 0.01 && r < 0.49 ? " \u2713" : "") +
+        "  \u00b7  \u03b8 = " + (th * Math.PI).toFixed(2) + " / 0" +
+        (Math.abs(th) <= 0.01 ? " \u2713" : "")
+      );
     }
     if (L.id === "wall") {
       const snap = LESSONS[6]._snap;
-      if (snap !== undefined && snapOf(controls) !== snap) return "chamber crossed \u2713";
+      if (snap !== undefined && snapOf(controls) !== snap) {
+        return anyBreaking()
+          ? "drag a \u03b2 slider away from the wall"
+          : "wall crossed \u2713";
+      }
       return anyBreaking() ? "press Cross Wall" : "drag a \u03b2 slider to a wall (amber)";
-    }
-    if (L.id === "strata") {
-      const ph = LESSONS[7]._phase || 0;
-      const t = parseFloat(controls.tInput.value);
-      if (ph === 0) return "in stratum mode: " + (controls.stratumRef() ? "\u2713" : "press lim t\u2192\u221e (r at 0 / 0.5 / 1, \u03b8 = 0, t \u2265 0.9)");
-      if (ph === 1) return "climb: t = " + t.toFixed(2) + " / 0.8";
-      return "drag t back down to leave" + (controls.stratumRef() ? "" : " \u2713");
     }
     if (L.id === "beta") {
       // live wall proximity (the red-zone ends of the tracks) + the amber
@@ -391,12 +428,16 @@ export function makeTutorial(ctx) {
     delete L._phase;
     delete L._start;
     delete L._snap;
+    delete L._r0;
+    delete L._th0;
     if (L.id === "wall") L._snap = snapOf(controls);
     if (L.id === "phi") L._start = parseFloat(controls.phiInput.value);
-    // every lesson starts OUTSIDE the stratum (r/theta/t are parked and
-    // disabled while it is active — entering any lesson mid-stratum would
-    // soft-lock its task; Back out of the strata lesson included)
-    if (controls.stratumRef()) controls.leaveStratum();
+    // lessons start OUTSIDE the stratum (r/theta/t are parked and disabled
+    // while it is active — entering most lessons mid-stratum would
+    // soft-lock their task). EXCEPTION (user request 2026-09-18): the phi
+    // lesson follows lesson 3, which ENDS in the stratum — stay there and
+    // keep the lim button enabled (the phi task needs t > 0 anyway).
+    if (L.id !== "phi" && controls.stratumRef()) controls.leaveStratum();
     applyGate();
     // the beta lesson must START from an interior tuple: entering while
     // already on a wall (the user was playing with walls) would
@@ -410,14 +451,15 @@ export function makeTutorial(ctx) {
     done = true;
     // completing a lesson unlocks its target control for later lessons.
     // Cross Wall and lim are NOT granted here (user request 2026-09-17):
-    // Cross Wall unlocks only in the wall-crossing lesson, lim only in the
-    // strata lesson (both via their lesson control lists); phi unlocks in
-    // the phi lesson and the recap enables everything.
+    // Cross Wall unlocks only in the wall-crossing lesson, lim only via the
+    // r1 lesson's control list; phi unlocks in the phi lesson and the recap
+    // enables everything. t is NOT granted here either (user request
+    // 2026-09-18): it enables only once the t lesson begins (its control
+    // list), so finishing lesson 1 alone leaves it disabled.
     const L = LESSONS[lesson];
     const grant = (id) => {
       if (unlocked.indexOf(id) === -1) unlocked.push(id);
     };
-    if (L.id === "space") grant("t");
     if (L.id === "phi") grant("phi");
     if (L.id === "beta") {
       grant("beta0");
@@ -426,7 +468,6 @@ export function makeTutorial(ctx) {
       grant("beta3");
     }
     if (L.id === "wall") grant("cross");
-    if (L.id === "strata") grant("lim");
     applyGate();
     render();
   }
@@ -438,7 +479,9 @@ export function makeTutorial(ctx) {
   // container's bottom padding is reserved for the card's height so the
   // docked card always fits below the content (the page grows instead of
   // the card covering controls). Null anchor (placeholder lessons) falls
-  // back to the top-right corner dock.
+  // back to the top-right corner dock. EXCEPTION: the phi lesson (user
+  // request 2026-09-18) floats to the RIGHT of the Moduli Coordinates
+  // panel, overlaying the Parameters card (handled in reposition).
   function anchorPanel(id) {
     if (
       id === "r" || id === "theta" || id === "t" || id === "phi" || id === "lim"
@@ -487,16 +530,33 @@ export function makeTutorial(ctx) {
       bottomDock = true;
     } else {
       setW("");
-      const panel = anchorPanel(L.anchor);
       let ok = false;
-      if (panel) {
-        const rect = panel.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-          setMaxW(Math.min(340, rect.width) + "px");
-          const crect = container.getBoundingClientRect();
-          left = rect.left - crect.left;
-          top = rect.bottom - crect.top + 8;
-          ok = true;
+      if (L.anchor === "sl") {
+        // the phi lesson (user request 2026-09-18): float to the RIGHT of
+        // the Moduli Coordinates panel, overlaying the Parameters card
+        const mb = controls.moduliBox;
+        if (mb) {
+          const mrect = mb.getBoundingClientRect();
+          if (mrect.width > 0 && mrect.height > 0) {
+            const crect = container.getBoundingClientRect();
+            setMaxW("340px");
+            left = mrect.right - crect.left + 8;
+            top = mrect.top - crect.top;
+            ok = true;
+          }
+        }
+      }
+      if (!ok) {
+        const panel = anchorPanel(L.anchor);
+        if (panel) {
+          const rect = panel.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            setMaxW(Math.min(340, rect.width) + "px");
+            const crect = container.getBoundingClientRect();
+            left = rect.left - crect.left;
+            top = rect.bottom - crect.top + 8;
+            ok = true;
+          }
         }
       }
       if (!ok) {
@@ -532,8 +592,19 @@ export function makeTutorial(ctx) {
   function tick() {
     if (!active) return;
     const L = LESSONS[lesson];
-    if (L.task && !done && L.predicate(controls)) markDone();
-    if (L.task && !done) taskEl.textContent = "Task: " + liveTaskText();
+    if (L.task) {
+      // LIVE gating (user request 2026-09-18): Next is enabled only while
+      // the predicate HOLDS — moving the sliders off the passing state
+      // disables it again. `done` stays latched only for control unlocks.
+      const pass = L.predicate(controls);
+      if (pass && !done) markDone();
+      nextBtn.disabled = !pass;
+      if (!pass) taskEl.textContent = "Task: " + liveTaskText();
+      else if (taskEl.textContent !== "Task complete! \u2713") {
+        taskEl.textContent = "Task complete! \u2713";
+        taskEl.style.color = "";
+      }
+    }
     reposition();
   }
 
@@ -582,6 +653,11 @@ export function makeTutorial(ctx) {
     lastMaxW = null;
     restoreDefaults();
     setGate(null, null);
+    // sync the widget's toggle button label back to "Tutorial" (user
+    // request 2026-09-18: exiting from the card's Exit button must reset
+    // the exterior "Exit tutorial" button too, not just the widget's own
+    // toggle path)
+    if (typeof ctx.onExit === "function") ctx.onExit();
   }
 
   // ---- card buttons ------------------------------------------------------

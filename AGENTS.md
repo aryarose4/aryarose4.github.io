@@ -819,11 +819,24 @@ Tracked work items; keep statuses updated.
      wall-crossing lesson (task = chamber snapshot changes; beta sliders
      enabled so a wall can be reached if none is amber), real strata
      lesson (task phases: enter stratum via lim, climb t >= 0.8, leave),
-     real recap (free play, all controls). enterLesson ALWAYS leaves the
-     stratum first (Back out of strata mid-stratum would soft-lock).
-     Headless fake-ctx smoke test (/tmp/kilo/tut-test.mjs, uncommitted)
-     walks all 9 lessons incl. ordering/gating/Back/exit — 27 checks PASS.
-     widget.js untouched; full suite exit 0.
+     real recap (free play, all controls). enterLesson leaves the stratum
+     first EXCEPT for the phi lesson (2026-09-18 user request: lesson 3
+     ends IN the stratum — phi stays there, lim kept in its control list,
+     and its card anchors BELOW the SL(2,C) panel (anchor "sl" ->
+     controls.slDetails) so the views the task needs stay visible).
+      Headless fake-ctx smoke test (/tmp/kilo/tut-test.mjs, uncommitted)
+      walks all lessons incl. ordering/gating/Back/exit — 32 checks PASS
+      (2026-09-18). widget.js untouched; full suite exit 0.
+      2026-09-18 batch (user requests): (1) LIVE Next gating — Next is
+      enabled only while the lesson predicate HOLDS (moving the sliders
+      off the passing state disables it again); `done` stays latched
+      solely for control unlocks; (2) lesson 4 (phi) extended with
+      phases: sweep phi >= 90 deg, then leave the stratum via the
+      lim t->0 button and return to the central sphere (t = 0,
+      0 < r < 0.5, theta = 0) before Next enables; (3) lesson 5 (beta)
+      gates lim + sl ON and its amber-wall predicate is live too;
+      (4) lesson 7 (recap) anchors where lesson 6 was (anchor "cross"
+      -> Parameters card, no more corner dock).
  25. TODO: "How it works" Kempf–Ness mini-game explainer (separate
      button next to Tutorial; see the plan section above). 7-slider
      special case; give-up button fills the solver's values. Will carry
