@@ -16,7 +16,7 @@
 //        -1 for the four cycle tuples
 //   [E]  cycle tuples now solve via the cycle reindexing (solver.js):
 //        full residual bars as [A] (su2/muU1/closure < 1e-9, muC < 1e-6)
-import { makeHyperpolygon, muSU2Coords, starIndex, starSlots, starSig, cycleSig } from "./solver.js";
+import { makeHyperpolygon, muSU2Coords, starIndex, starSlots, starSig } from "./solver.js";
 
 function cAbs2(a) {
   return a[0] * a[0] + a[1] * a[1];

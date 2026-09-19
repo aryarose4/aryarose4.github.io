@@ -16,6 +16,10 @@ import { shortSubsets, chamberInterval, applyBetaDrag, breakingSubsets } from ".
 import { makeSideView, probeExteriorMap, attachmentRs, PERM, CAP_NEAR_INF_W, PARALLEL_TOL } from "./sideview.js";
 import { makeTutorial } from "./tutorial.js";
 
+// Solve clamp: t = 1 is genuinely singular (the y-solve's t/(1-t)
+// prescription), so the SOLVE evaluates at t <= T_SOLVE_MAX while the
+// DISPLAYED t may reach 1 (readout "∞"; the side view uses the raw t).
+// Every solver-side retry path shares this ceiling.
 const T_SOLVE_MAX = 0.99;
 // Stratum-mode lim-button band (user request 2026-09-15): while the
 // I-stratum is active the exit button ("lim t->0") shows only when the
@@ -28,6 +32,38 @@ const LIM_T0_BAND = 0.1;
 // plays as a short smoothstep morph instead of a teleport.
 const STRATUM_MORPH_MS = 350;
 
+// Reused orientor flag singletons (per-frame allocation churn): the render
+// loop hands the orientation servo an { idle } flags object every frame;
+// the two constant states are shared singletons instead of a fresh object
+// per frame. update() only reads flags.idle.
+const IDLE_YES = { idle: true };
+const IDLE_NO = { idle: false };
+
+// Smoothstep 0..1 ramp (the clamp-then-u*u*(3-2*u) shape shared by
+// phiBoundaryWeight and the stratum morph blend). MUST stay bit-identical
+// to the inlined original at each site.
+function smoothstep(a, b, x) {
+  const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+}
+
+// Perspective world height at distance dist for a camera with vertical fov
+// (2*dist*tan(fov/2)); shared by updateEdgeRadii and updateLabelScales.
+function viewHeight(camera, dist) {
+  return 2 * dist * Math.tan((camera.fov * Math.PI) / 360);
+}
+
+// Complement of a 2-element subset I within {0,1,2,3} (chamber box labels,
+// terms and the Cross Wall flop).
+function complement4(I) {
+  const comp = [];
+  for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) comp.push(n);
+  return comp;
+}
+
+// Light/dark theme color sets for the polygon view (edges, axes, markers,
+// borders) plus the side-view palette keys makeSideView consumes; picked
+// by the page's data-theme attribute.
 const PALETTES = {
   light: {
     edgeA: 0x000000,
@@ -48,7 +84,6 @@ const PALETTES = {
     sphereGrey: 0x93a5b8,
     ext: 0xcdd7e2,
     extHi: 0x8fa3ba,
-    arc: 0x9aa4b2,
     sideBg: null,
   },
   dark: {
@@ -63,7 +98,6 @@ const PALETTES = {
     sphereGrey: 0xb0b0b0,
     ext: 0xffffff,
     extHi: 0xffffff,
-    arc: 0x707c8a,
     sideBg: null,
   },
 };
@@ -392,10 +426,8 @@ function ensureSliderStyles() {
     // section labels: the header of every panel ("MODULI COORDINATES",
     // "PARAMETERS", ...) — small caps, one consistent style
     "#hyperpolygon-widget .hp-sec-label {",
-    "  font-size: 0.78em;",
+    "  font-size: 0.82em;",
     "  font-weight: 600;",
-    "  text-transform: uppercase;",
-    "  letter-spacing: 0.07em;",
     "  color: var(--hp-box-tx);",
     "  margin: 0 0 8px 1px;",
     "}",
@@ -516,7 +548,7 @@ function activate(container) {
   // event bus (task 24, milestone 1): tutorial.js subscribes here; the
   // arrays stay empty (zero per-frame cost) until a tutorial is entered.
   // Declared this early so every fire site below sees it (TDZ discipline).
-  const hooks = { onCrossWall: [], onStratum: [], onFrame: [], onSide: [] };
+  const hooks = { onFrame: [] };
   // which chamberShorts pair slot attaches at each exterior-sphere point
   // (south, equator, north): measured once at load from the polygon
   // parallelism at the three attachment points (sideview.js). By the
@@ -576,9 +608,13 @@ function activate(container) {
   // action (updatePhiViews rotates it; see below).
   const matBox = document.createElement("div");
   matBox.className = "hp-panel";
+  // spacing balance (user request 2026-09-18): less room at the top, a
+  // little more below the matrices
+  matBox.style.paddingTop = "4px";
+  matBox.style.paddingBottom = "18px";
   const matLabel = document.createElement("div");
   matLabel.className = "hp-sec-label";
-  matLabel.textContent = "Solved pair";
+  matLabel.textContent = "Solved Pair";
   matBox.appendChild(matLabel);
   const matRow = document.createElement("div");
   matRow.style.display = "flex";
@@ -710,6 +746,10 @@ function activate(container) {
   modRowRT.style.display = "flex";
   modRowRT.style.flexWrap = "wrap";
   modRowRT.style.gap = "6px 16px";
+  // shift the slider rows below the floated Tutorial button, with a little
+  // breathing room (user request 2026-09-18)
+  modRowRT.style.clear = "both";
+  modRowRT.style.marginTop = "10px";
   moduliBox.appendChild(modRowRT);
   const modRowTG = document.createElement("div");
   modRowTG.style.display = "flex";
@@ -718,12 +758,11 @@ function activate(container) {
   modRowTG.style.marginTop = "6px";
   moduliBox.appendChild(modRowTG);
 
-  // moment-map residual readout (spec 15), moved BELOW the Moduli
-  // Coordinates panel (user request 2026-09-15)
+  // moment-map residual readout (spec 15) — appended to leftCol BELOW the
+  // SL(2,C) panel (user request 2026-09-18; see the slDetails block)
   const caption = document.createElement("div");
   caption.style.marginTop = "8px";
   caption.style.fontSize = "0.85em";
-  leftCol.appendChild(caption);
 
   // Top-right overlay (task 1): the chamber's three short pairs, one row
   // per exterior sphere, each naming the two leg vectors that pair
@@ -796,7 +835,7 @@ function activate(container) {
   const slDetails = document.createElement("details");
   slDetails.className = "hp-panel";
   const slSummary = document.createElement("summary");
-  slSummary.textContent = "show SL(2,\u2102) polygons";
+  slSummary.textContent = "Show sl(2,\u2102) polygons";
   slSummary.className = "hp-sec-label";
   slSummary.style.cursor = "pointer";
   slDetails.appendChild(slSummary);
@@ -806,6 +845,7 @@ function activate(container) {
   slRow.style.gap = "10px";
   slDetails.appendChild(slRow);
   leftCol.appendChild(slDetails);
+  leftCol.appendChild(caption);
 
   const SL_SEG = 5; // 4 leg edges + the v4 -> v0 closing segment
   function makeSlView(tag) {
@@ -863,13 +903,17 @@ function activate(container) {
     geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
     const mat = new THREE.LineBasicMaterial({ vertexColors: true });
-    scene.add(new THREE.LineSegments(geom, mat));
+    // the polygon (line + markers) rides a group driven by the orientation
+    // servo (the same quaternion as the main polygon view); axes stay fixed
+    const group = new THREE.Group();
+    group.add(new THREE.LineSegments(geom, mat));
 
     const markPos = new Float32Array(5 * 3);
     const markGeom = new THREE.BufferGeometry();
     markGeom.setAttribute("position", new THREE.BufferAttribute(markPos, 3));
     const markMat = new THREE.PointsMaterial({ size: 4, sizeAttenuation: false });
-    scene.add(new THREE.Points(markGeom, markMat));
+    group.add(new THREE.Points(markGeom, markMat));
+    scene.add(group);
 
     function resize() {
       const w = host.clientWidth;
@@ -888,6 +932,7 @@ function activate(container) {
       scene: scene,
       camera: camera,
       controls: controls,
+      group: group,
       axMat: axMat,
       markMat: markMat,
       pos: pos,
@@ -914,8 +959,11 @@ function activate(container) {
   // as a plane rotation A' = cos(phi) A - sin(phi) K, K' = sin(phi) A +
   // cos(phi) K, exactly like Re/Im but in the adjoint splitting. The su(2)
   // polygon is untouched (|y|^2 and y†y are phase-invariant) and the
-  // moment-map residuals are unchanged. At phi = 0 the rotation is bit-exact
-  // (cos 0 = 1, sin 0 = 0).
+   // moment-map residuals are unchanged. At phi = 0 the rotation is bit-exact
+   // (cos 0 = 1, sin 0 = 0). Boundary exception (user request 2026-09-18):
+   // at the two boundary slices (t = 0, and t -> infinity / the stratum
+   // rim) the canvases' rotation is cancelled by phiBoundaryWeight — the
+   // polygons are phi-invariant there (see updatePhiViews below).
   let sl2Base = null;
   let solvedY = null;
   const SL_SEG_ENDS = [
@@ -950,12 +998,44 @@ function activate(container) {
     }
     return { self: self, skew: skew };
   }
+  // Boundary phi-invariance (user request 2026-09-18). At the two boundary
+  // slices of the moduli space the SL(2,C) polygons must stay STATIC under
+  // phi — the display-side gauge adjustment cancels the e^{i·phi} rotation
+  // there instead of displaying it:
+  //   (1) the exterior-sphere tips (t -> infinity: pipeline t -> 1, or the
+  //       stratum's t1 -> 1 rim) — boundary weight w1;
+  //   (2) the central sphere t = 0 — boundary weight w0. In interior
+  //       chambers the polygons sit at the origin at t = 0 (mu_SL = 0), so
+  //       the weight is vacuous there; in edge-dominant EXTERIOR chambers
+  //       the polygons are nonzero and this is the correction that matters.
+  // Transition function: w(t) = max(w0, w1) with smoothstep ramps of width
+  // PHI_BW = 0.1 — exactly 1 at each boundary slice (completely static),
+  // smoothly fading to 0 across the band so mid-moduli behavior (the full
+  // e^{i·phi} rotation) is unchanged. Effective display rotation angle:
+  // g_eff = phi · (1 - w(t)) — at w = 1 the canvases are bit-exact static
+  // (cos 0 = 1, sin 0 = 0). The y matrix READOUT keeps the FULL rotation:
+  // the invariance is a property of the boundary slices' displayed
+  // polygons, not of y itself. Uses the RAW display t (1 allowed — the
+  // side-view convention; the solve keeps T_SOLVE_MAX), so t = 1 is fully
+  // invariant even though the drawn data is the T_SOLVE_MAX solve
+  // ("display at the limit", the established pattern).
+  const PHI_BW = 0.1;
+  function phiBoundaryWeight() {
+    const t = Math.min(Math.max(parseFloat(tInput.value), 0), 1);
+    const w0 = 1 - smoothstep(0, PHI_BW, t);
+    const w1 = smoothstep(1 - PHI_BW, 1, t);
+    return Math.max(w0, w1);
+  }
   // Apply the current phi to the two things it acts on: the y matrix
   // readout (entrywise rotation by e^{i·phi}) and the SL(2,C) canvases
   // (self-adjoint / skew-adjoint components, coupled by the plane
-  // rotation). Never triggers a solver run.
+  // rotation, damped by the boundary-invariance weight). Never triggers a
+  // solver run.
   function updatePhiViews() {
     const g = parseFloat(phiInput.value) * Math.PI;
+    // y ITSELF keeps the FULL rotation (user correction 2026-09-19: the
+    // boundary invariance is a property of the DISPLAYED SL(2,C) polygons
+    // only — the y matrix readout and the solved data are untouched)
     const c = Math.cos(g);
     const s = Math.sin(g);
     if (solvedY) {
@@ -966,6 +1046,10 @@ function activate(container) {
       );
     }
     if (!sl2Base) return;
+    // the canvases' rotation is damped by the boundary-invariance weight
+    const gEff = g * (1 - phiBoundaryWeight());
+    const cE = Math.cos(gEff);
+    const sE = Math.sin(gEff);
     const adj = sl2Adjoint(sl2Base);
     for (let vi = 0; vi < 2; vi++) {
       const view = vi === 0 ? slRe : slIm;
@@ -974,7 +1058,9 @@ function activate(container) {
         for (let j = 0; j < 3; j++) {
           const a = adj.self[k][j];
           const b = adj.skew[k][j];
-          view.markPos[k * 3 + j] = isSkew ? s * a + c * b : c * a - s * b;
+          view.markPos[k * 3 + j] = isSkew
+            ? sE * a + cE * b
+            : cE * a - sE * b;
         }
       }
       for (let si = 0; si < SL_SEG; si++) {
@@ -993,8 +1079,8 @@ function activate(container) {
     }
   }
 
-  // Chamber content (task 2 + spec 14): the beta sliders, their scale
-  // buttons and the chamber inequalities live directly in the flat
+  // Chamber content (task 2 + spec 14): the beta sliders and the chamber
+  // inequalities live directly in the flat
   // Parameters card (alias `panel` below) — no nested box, no collapse.
   const panel = paramsCard;
 
@@ -1077,7 +1163,7 @@ function activate(container) {
   }
   function updateEdgeRadii() {
     const dist = camera.position.distanceTo(controls.target);
-    edgeRad = 2 * dist * Math.tan((camera.fov * Math.PI) / 360) * EDGE_SCREEN_FRAC;
+    edgeRad = viewHeight(camera, dist) * EDGE_SCREEN_FRAC;
     for (let s = 0; s < 8; s++) {
       if (!edgeMeshes[s].visible) continue;
       edgeMeshes[s].scale.x = edgeRad;
@@ -1100,7 +1186,28 @@ function activate(container) {
   // polygon as t gets large nor fades when the user zooms out. The bend
   // points stay unlabeled.
   const sideLabelSprites = [];
+  // Label texture cache (per-frame allocation churn): keyed by
+  // text + "|" + colorCss; labels are only v1..v4 with per-theme colors,
+  // so the steady state after a solve is 4 cache hits per input event
+  // instead of 4 canvas + texture allocations. Entries hold the texture
+  // AND its canvas aspect (needed on every call — it feeds label scaling);
+  // evicted entries are disposed, textures still in the cache never are.
+  const labelTexCache = new Map();
+  const LABEL_TEX_CAP = 16;
   function drawLabelTexture(sp, text, colorCss) {
+    const key = text + "|" + colorCss;
+    let entry = labelTexCache.get(key);
+    if (entry) {
+      // LRU refresh (Map preserves insertion order)
+      labelTexCache.delete(key);
+      labelTexCache.set(key, entry);
+      if (sp.material.map !== entry.tex) {
+        sp.material.map = entry.tex;
+        sp.material.needsUpdate = true;
+      }
+      sp.userData.aspect = entry.aspect;
+      return;
+    }
     const pad = 14;
     const fontPx = 44;
     const fontSpec = fontPx + "px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
@@ -1118,7 +1225,16 @@ function activate(container) {
     ctx.fillText(text, pad, h / 2);
     const tex = new THREE.CanvasTexture(cnv);
     tex.minFilter = THREE.LinearFilter;
-    if (sp.material.map) sp.material.map.dispose();
+    // store BEFORE any dispose: a texture in the cache must never be
+    // disposed even if it is the one currently assigned to the sprite
+    entry = { tex, aspect: w / h };
+    labelTexCache.set(key, entry);
+    while (labelTexCache.size > LABEL_TEX_CAP) {
+      const oldest = labelTexCache.keys().next().value;
+      const old = labelTexCache.get(oldest);
+      labelTexCache.delete(oldest);
+      old.tex.dispose();
+    }
     sp.material.map = tex;
     sp.material.needsUpdate = true;
     sp.userData.aspect = w / h;
@@ -1154,7 +1270,7 @@ function activate(container) {
   const LABEL_SCREEN_FRAC = 0.03;
   function updateLabelScales() {
     const dist = camera.position.distanceTo(controls.target);
-    const labelScale = 2 * dist * Math.tan((camera.fov * Math.PI) / 360) * LABEL_SCREEN_FRAC;
+    const labelScale = viewHeight(camera, dist) * LABEL_SCREEN_FRAC;
     for (let i = 0; i < 4; i++) {
       const sp = sideLabelSprites[i];
       const asp = sp.userData.aspect || 3;
@@ -1163,13 +1279,18 @@ function activate(container) {
     }
   }
 
-  // Task 1 parallel-pair state. legSine[p] is the sine of the angle
-  // between the v-side directions of LEG_PAIRS[p] (zero = parallel);
-  // threshold matches sideview.js's probe tolerance. A pair entering
+  // Task 1 parallel-pair state. legParallel[p] tracks whether the angle
+  // between the v-side directions of LEG_PAIRS[p] is parallel
+  // (sine below the threshold, which matches sideview.js's probe
+  // tolerance). A pair entering
   // parallelism fires ONE yellow blink (a smooth in-and-out pulse over
-  // BLINK_PERIOD seconds, played in the render loop); while a pair stays
+  // BLINK_PERIOD, played in the render loop); while a pair stays
   // parallel (the straight pair at an attachment snap) both v-sides hold
   // solid yellow.
+  // NOTE (phase-3 audit): the blink timing divides a MILLISECOND delta
+  // ((now - blinkStart), both performance.now() values), so the 0.9 value
+  // spans 0.9 ms (effectively one frame) — the old "seconds" reading was
+  // wrong; the value and semantics are unchanged here.
   const LEG_PAIRS = [
     [0, 1],
     [0, 2],
@@ -1182,8 +1303,7 @@ function activate(container) {
   // straight-pair highlight and the side view's attachment-pair probe must
   // never disagree about which pair is straight
   const PAIR_SINE_TOL = PARALLEL_TOL;
-  const BLINK_PERIOD = 0.9;
-  const legSine = new Array(6).fill(Infinity);
+  const BLINK_PERIOD_MS = 0.9; // blink clock: (now - blinkStart) is a performance.now() delta (ms)
   const legParallel = new Array(6).fill(false);
   let blinkPair = -1;
   let blinkStart = -1e9;
@@ -1197,24 +1317,45 @@ function activate(container) {
     return -1;
   }
   // per-frame yellow overrides on the edge materials (base colors were
-  // written into segBase by applyColors)
+  // written into segBase by applyColors). fSeg is a reused buffer (per-frame
+  // allocation churn). Change detection: the 8 material color lerps are
+  // skipped when fSeg is unchanged and no invalidation is pending —
+  // every edge material color write flows through this function (audited:
+  // sole writer of edgeMeshes[s].material.color), and the remaining inputs
+  // segBase/yellowCol mutate only in applyColors, which sets
+  // edgeColorsDirty. legParallel/blinkPair changes surface as fSeg changes.
+  const fSeg = [0, 0, 0, 0, 0, 0, 0, 0];
+  const fSegApplied = [-1, -1, -1, -1, -1, -1, -1, -1];
+  let edgeColorsDirty = true;
   function updateEdgeColors(now) {
-    const fSeg = [0, 0, 0, 0, 0, 0, 0, 0];
+    for (let s = 0; s < 8; s++) fSeg[s] = 0;
     for (let p = 0; p < 6; p++) {
       let f = 0;
       if (legParallel[p]) {
         f = 1;
       } else if (p === blinkPair) {
-        const ph = (now - blinkStart) / BLINK_PERIOD;
+        const ph = (now - blinkStart) / BLINK_PERIOD_MS;
         if (ph >= 0 && ph < 1) f = Math.sin(Math.PI * ph);
         else blinkPair = -1;
       }
       if (f > fSeg[2 * LEG_PAIRS[p][0]]) fSeg[2 * LEG_PAIRS[p][0]] = f;
       if (f > fSeg[2 * LEG_PAIRS[p][1]]) fSeg[2 * LEG_PAIRS[p][1]] = f;
     }
+    let same = !edgeColorsDirty;
+    if (same) {
+      for (let s = 0; s < 8; s++) {
+        if (fSeg[s] !== fSegApplied[s]) {
+          same = false;
+          break;
+        }
+      }
+    }
+    if (same) return;
     for (let s = 0; s < 8; s++) {
       edgeMeshes[s].material.color.copy(segBase[s]).lerp(yellowCol, fSeg[s]);
+      fSegApplied[s] = fSeg[s];
     }
+    edgeColorsDirty = false;
   }
 
   const colA = new THREE.Color();
@@ -1232,6 +1373,9 @@ function activate(container) {
     for (let seg = 0; seg < 8; seg++) {
       segBase[seg].copy(seg % 2 === 0 ? colA : colB);
     }
+    // edge material colors are derived from segBase/yellowCol inside
+    // updateEdgeColors — force one reapply after this palette change
+    edgeColorsDirty = true;
     canvasBox.style.borderColor = pal.border;
     caption.style.color = pal.caption;
     chamberLabel.style.color = pal.caption;
@@ -1329,9 +1473,15 @@ function activate(container) {
   function displayedState() {
     if (!morph) return { verts: lastVerts, sl2: sl2Base };
     const s = Math.min(1, Math.max(0, (performance.now() - morph.start) / STRATUM_MORPH_MS));
-    return morphBlend(s * s * (3 - 2 * s));
+    return morphBlend(smoothstep(0, 1, s));
   }
 
+  // One full re-solve + redraw: reads the sliders (t clamped to
+  // T_SOLVE_MAX), gates the PERMUTE_23 call pattern, runs the pipeline
+  // solve (or the I-stratum closed form in stratum mode) with its retries,
+  // Kabsch-aligns + morphs branch switches, and commits the polygon
+  // geometry, matrix readout, caption and side-view feeds. Fired by the
+  // render loop whenever `pending` is set (scheduleSolve).
   function solveAndDraw() {
     const r = parseFloat(rInput.value);
     const theta = parseFloat(thetaInput.value) * Math.PI;
@@ -1455,7 +1605,6 @@ function activate(container) {
         blinkPair = p;
         blinkStart = nowSolve;
       }
-      legSine[p] = sine;
       legParallel[p] = sine < PAIR_SINE_TOL;
     }
     for (let k = 0; k < 3; k++) {
@@ -1499,6 +1648,11 @@ function activate(container) {
     pending = true;
   }
 
+  // One moduli-slider row: label + range input + formatted readout, with
+  // magnetic snaps ({value, tol} list, first match wins on input) and a
+  // scheduleSolve per input event unless noSolve (phi must never trigger a
+  // solver run). Appended to `row` (default the (r, theta) row); returns
+  // the input element.
   function makeSlider(label, min, max, step, value, format, snaps = [], noSolve = false, row = null) {
     const box = document.createElement("div");
     box.style.display = "flex";
@@ -1682,10 +1836,9 @@ function activate(container) {
     const S = extMap[k];
     const I = chamberShorts[S];
     if (!I || I.length !== 2) return;
-    const comp = [0, 1, 2, 3].filter((n) => I.indexOf(n) === -1);
     rBeforeStratum = parseFloat(rInput.value);
     thetaBeforeStratum = k === 1 ? parseFloat(thetaInput.value) : null;
-    stratum = { k: k, S: S, I: I, comp: comp };
+    stratum = { k: k, I: I };
     rInput.disabled = true;
     thetaInput.disabled = true;
     // park exactly on the attachment (the stratum branch gate) — the
@@ -1705,7 +1858,6 @@ function activate(container) {
     limBtn.title = "leave the I-stratum (t jumps back to infinity on the exterior sphere)";
     scheduleSolve();
     refreshSide();
-    hooks.onStratum.forEach((f) => f(true));
   }
   function leaveStratum() {
     stratum = null;
@@ -1726,7 +1878,6 @@ function activate(container) {
     limBtn.title = "enter the I-stratum (the tip of this exterior sphere)";
     scheduleSolve();
     refreshSide();
-    hooks.onStratum.forEach((f) => f(false));
   }
   limBtn.addEventListener("click", () => {
     if (stratum) leaveStratum();
@@ -1764,7 +1915,6 @@ function activate(container) {
     // exit button ("lim t->0") shows only when the t slider is near 0.
     const nearT0 = parseFloat(tInput.value) <= LIM_T0_BAND;
     limBtn.style.display = (stratum ? nearT0 : !!(st && st.nearInfinity)) ? "" : "none";
-    hooks.onSide.forEach((f) => f(lastSideState));
   }
   function setTHover(on) {
     if (tHover === on) return;
@@ -1783,7 +1933,6 @@ function activate(container) {
   // held fixed. The tracked chamber's seven wall equalities render as red
   // lines; the current parameter pair is the black dot. Both plots redraw
   // on every beta change (syncBetaSliders).
-  const SUBSCRIPTS = SUBS; // 1-based display subscripts (shared with sideName)
   function cssVar(name) {
     return getComputedStyle(document.getElementById("hyperpolygon-widget"))
       .getPropertyValue(name)
@@ -1802,6 +1951,11 @@ function activate(container) {
   }
   refreshPlotColors();
   const slicePlots = [];
+  // One chamber-slice plot (spec 10): a small canvas showing the
+  // (beta_ix, beta_iy) plane — the wall equalities as red lines (the other
+  // two legs held fixed) and the active pair as a black dot. Registered in
+  // slicePlots (redrawn by drawSlicePlots on each solve/theme change);
+  // returns {draw, wrap}.
   function makeSlicePlot(ix, iy) {
     const wrap = document.createElement("div");
     wrap.style.display = "flex";
@@ -1817,7 +1971,7 @@ function activate(container) {
     const cap = document.createElement("div");
     cap.style.fontSize = "0.75em";
     cap.style.color = "var(--hp-box-tx)";
-    cap.textContent = "\u03b2" + SUBSCRIPTS[ix] + ", \u03b2" + SUBSCRIPTS[iy];
+    cap.textContent = "\u03b2" + SUBS[ix] + ", \u03b2" + SUBS[iy];
     wrap.appendChild(cap);
     sliceRow.appendChild(wrap);
     const PAD = 7;
@@ -2038,9 +2192,8 @@ function activate(container) {
   // split omitted); amber while its wall is touched, tooltip shows the
   // live subset sums. (The Scale β Down/Up buttons are GONE — user request
   // 2026-09-15; the beta sliders alone drive the tuple within the chamber.)
-  const SUB = SUBS; // 1-based display subscripts (shared with sideName)
   const betaTerm = (I) =>
-    I.length === 0 ? "0" : I.map((n) => "β" + SUB[n]).join("+");
+    I.length === 0 ? "0" : I.map((n) => "β" + SUBS[n]).join("+");
   const chamberRow = document.createElement("div");
   chamberRow.style.flex = "1 1 100%";
   chamberRow.style.display = "flex";
@@ -2055,8 +2208,7 @@ function activate(container) {
   const chamberBoxes = [];
   for (let k = 1; k < chamberShorts.length; k++) {
     const I = chamberShorts[k];
-    const comp = [];
-    for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) comp.push(n);
+    const comp = complement4(I);
     const el = document.createElement("span");
     el.className = "hp-chamber-box";
     const text = document.createTextNode(fmtSet(I) + " < " + fmtSet(comp));
@@ -2082,8 +2234,7 @@ function activate(container) {
     for (let k = 0; k < chamberBoxes.length; k++) {
       const rec = chamberBoxes[k];
       const I = chamberShorts[k + 1];
-      const comp = [];
-      for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) comp.push(n);
+      const comp = complement4(I);
       rec.I = I;
       rec.term = betaTerm(I);
       rec.termC = betaTerm(comp);
@@ -2123,8 +2274,7 @@ function activate(container) {
     // short side changes) — leave the stratum first
     if (stratum) leaveStratum();
     const I = chamberShorts[k];
-    const comp = [];
-    for (let n = 0; n < 4; n++) if (I.indexOf(n) === -1) comp.push(n);
+    const comp = complement4(I);
     chamberShorts[k] = comp;
     // the exterior-sphere <-> short-pair correspondence is chamber-
     // dependent: re-probe the attachment map for the NEW chamber and
@@ -2134,7 +2284,6 @@ function activate(container) {
     rebuildChamberBoxes();
     syncBetaSliders();
     scheduleSolve();
-    hooks.onCrossWall.forEach((f) => f(k));
   }
 
   // tutorial exit (task 24): restore the load-time chamber for the default
@@ -2233,7 +2382,6 @@ function activate(container) {
         slDetails: slDetails,
         beta: beta,
         betaInputs: betaInputs,
-        syncBetaSliders: syncBetaSliders,
         scheduleSolve: scheduleSolve,
         chamberBoxes: chamberBoxes,
         // chamber bookkeeping for the beta lesson (live references —
@@ -2244,9 +2392,7 @@ function activate(container) {
         // docks BELOW the anchor's owning panel, never over a control)
         moduliBox: moduliBox,
         paramsCard: paramsCard,
-        crossWall: crossWall,
         limBtn: limBtn,
-        enterStratum: enterStratum,
         leaveStratum: leaveStratum,
         stratumRef: () => stratum,
         resetChamber: resetChamber,
@@ -2300,7 +2446,7 @@ function activate(container) {
       // clamp to [0,1]: morph.start is set mid-frame (after the loop read
       // `now`), so the creation frame's raw s is slightly negative
       const s = Math.min(1, Math.max(0, (now - morph.start) / STRATUM_MORPH_MS));
-      const e = s * s * (3 - 2 * s);
+      const e = smoothstep(0, 1, s);
       const cur = morphBlend(e);
       lastVerts = cur.verts;
       writePolygonGeometry(cur.verts);
@@ -2309,8 +2455,12 @@ function activate(container) {
       if (s >= 1) morph = null;
     }
     if (lastVerts) {
-      const q = orientor.update(lastVerts, dt, { idle: now - lastInput > 250 });
+      const q = orientor.update(lastVerts, dt, now - lastInput > 250 ? IDLE_YES : IDLE_NO);
       polyGroup.quaternion.set(q[0], q[1], q[2], q[3]);
+      // user request 2026-09-18: the SL(2,C) polygons get the same servo
+      // orientation as the main polygon view (axes stay world-fixed)
+      slRe.group.quaternion.set(q[0], q[1], q[2], q[3]);
+      slIm.group.quaternion.set(q[0], q[1], q[2], q[3]);
     }
     // yellow edge overrides (straight pair solid, blink pulse decaying)
     updateEdgeColors(now);

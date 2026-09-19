@@ -29,6 +29,17 @@
 // Progress is session-only; exit restores the free-play default state
 // (r = 0.25, default beta, all controls enabled, stratum left).
 
+// Number of chamber-inequality boxes currently in the amber ("breaking")
+// state — the shared computation of the beta lesson's live task line and
+// its amber predicate (anyBreaking). Reads the widget's box DOM state.
+function breakingCount(boxes) {
+  let amber = 0;
+  for (let k = 0; k < boxes.length; k++) {
+    if (boxes[k].el.classList.contains("hp-breaking")) amber++;
+  }
+  return amber;
+}
+
 export function makeTutorial(ctx) {
   const controls = ctx.controls;
   const hooks = ctx.hooks;
@@ -52,7 +63,7 @@ export function makeTutorial(ctx) {
         "The right panel shows the whole moduli space, with the current " +
         "position marked by the black dot. The left panel displays the " +
         "polygon corresponding to the current position. The four sliders " +
-        "parameterize the four-dimensional space.  We'll begin wiht r and \u03b8.",
+        "parameterize the four-dimensional space.  We'll begin with r and \u03b8.",
       // user request 2026-09-18: ALL sliders disabled during the welcome
       // lesson (lockAll short-circuits the gate before the unlocked union)
       lockAll: true,
@@ -85,7 +96,6 @@ export function makeTutorial(ctx) {
       highlight: "t",
       anchor: "t",
       task: "sweep",
-      taskText: "t > 0",
       predicate: (c) => parseFloat(c.tInput.value) > 0,
     },
     {
@@ -107,7 +117,9 @@ export function makeTutorial(ctx) {
       body:
         "\u03c6 applies a gauge phase e<sup>i\u03c6</sup> to the y matrix. " +
         "This change is not reflected in the su(2) polygon, but you can see " +
-        "its effect in the sl(2,C) polygon views. Open that panel and try " +
+        "its effect in the sl(2,C) polygon views \u2014 except at the " +
+        "boundary slices (the central sphere t = 0 and the stratum rim), " +
+        "where the views are \u03c6-invariant. Open that panel and try " +
         "moving \u03c6. Then leave the stratum with the lim t\u21920 button " +
         "and return to the central sphere: t = 0 with 0 < r < 0.5 and " +
         "\u03b8 = 0.",
@@ -221,6 +233,8 @@ export function makeTutorial(ctx) {
     }
     return !anyBreaking();
   }
+  // String fingerprint of the current chamber (the chamberShorts list) —
+  // the wall-crossing lesson's task compares snapshots to detect a change.
   function snapOf(c) {
     const s = [];
     for (let k = 0; k < c.chamberShorts.length; k++) s.push(String(c.chamberShorts[k]));
@@ -291,27 +305,25 @@ export function makeTutorial(ctx) {
     titleEl.textContent = "Lesson " + lesson + " \u00b7 " + L.title;
     bodyEl.innerHTML = L.body;
     backBtn.style.display = lesson > 0 ? "" : "none";
-    if (L.locked) {
-      // placeholder lessons: Back / Exit only
-      nextBtn.style.display = "none";
-      taskEl.textContent = "";
-      taskEl.style.display = "none";
-    } else {
-      nextBtn.style.display = "";
-      if (L.task) {
-        taskEl.style.display = "";
-        nextBtn.disabled = !L.predicate(controls);
-        if (!nextBtn.disabled) {
-          taskEl.textContent = "Task complete! \u2713";
-          taskEl.style.color = "";
-        } else {
-          taskEl.textContent = "Task: " + liveTaskText();
-          taskEl.style.color = "inherit";
-        }
+    // last lesson: Next becomes the sole Finish button (user request
+    // 2026-09-18) — no separate Exit
+    const last = lesson === LESSONS.length - 1;
+    exitBtn.style.display = last ? "none" : "";
+    nextBtn.textContent = last ? "Finish" : "Next";
+    nextBtn.style.display = "";
+    if (L.task) {
+      taskEl.style.display = "";
+      nextBtn.disabled = !L.predicate(controls);
+      if (!nextBtn.disabled) {
+        taskEl.textContent = "Task complete! \u2713";
+        taskEl.style.color = "";
       } else {
-        taskEl.style.display = "none";
-        nextBtn.disabled = false;
+        taskEl.textContent = "Task: " + liveTaskText();
+        taskEl.style.color = "inherit";
       }
+    } else {
+      taskEl.style.display = "none";
+      nextBtn.disabled = false;
     }
   }
 
@@ -321,9 +333,11 @@ export function makeTutorial(ctx) {
     if (L.id === "space") {
       const r = parseFloat(controls.rInput.value);
       const th = parseFloat(controls.thetaInput.value);
-      const rDone = r >= 0.49;
+      // the check marks must mirror the PREDICATE's completion window
+      // (0.2..0.48, below the r = 0.5 snap), not an unreachable threshold
+      const rDone = r >= 0.2 && r <= 0.48;
       const thDone = Math.abs(th) <= 0.01;
-      let s = "r = " + r.toFixed(2) + " / 0.5" + (rDone ? " \u2713" : "");
+      let s = "r = " + r.toFixed(2) + " (0.2 to 0.48)" + (rDone ? " \u2713" : "");
       s += "  \u00b7  \u03b8 = " + (th * Math.PI).toFixed(2) + " / 0" + (thDone ? " \u2713" : "");
       return s;
     }
@@ -371,11 +385,7 @@ export function makeTutorial(ctx) {
     if (L.id === "beta") {
       // live wall proximity (the red-zone ends of the tracks) + the amber
       // count once a wall is touched
-      let amber = 0;
-      const boxes = controls.chamberBoxes;
-      for (let k = 0; k < boxes.length; k++) {
-        if (boxes[k].el.classList.contains("hp-breaking")) amber++;
-      }
+      const amber = breakingCount(controls.chamberBoxes);
       if (amber > 0) {
         return amber + (amber === 1 ? " wall" : " walls") + " touched \u2713";
       }
@@ -394,16 +404,12 @@ export function makeTutorial(ctx) {
         " — drag a \u03b2 slider to a red-zone end"
       );
     }
-    return L.taskText || "";
+    return "";
   }
 
   // ---- lesson transitions ------------------------------------------------
   function anyBreaking() {
-    const boxes = controls.chamberBoxes;
-    for (let k = 0; k < boxes.length; k++) {
-      if (boxes[k].el.classList.contains("hp-breaking")) return true;
-    }
-    return false;
+    return breakingCount(controls.chamberBoxes) > 0;
   }
 
   // restore the default beta tuple through the widget's own path (the beta
@@ -420,6 +426,10 @@ export function makeTutorial(ctx) {
     controls.scheduleSolve();
   }
 
+  // Switch to lesson i: reset its fresh task state (Back re-arms the
+  // predicate), snapshot the wall/phi lesson anchors, leave the stratum
+  // first EXCEPT for the phi lesson, then apply the control gating and
+  // reposition the card.
   function enterLesson(i) {
     lesson = i;
     done = false;
@@ -514,10 +524,29 @@ export function makeTutorial(ctx) {
       card.style.width = px;
     }
   }
+  // Position the lesson card: < 700px = full-width bottom dock; otherwise
+  // docked below the anchor's OWNING panel (the phi lesson floats right of
+  // the Moduli Coordinates panel), top-right corner dock as the fallback.
+  // The container's bottom padding is reserved for the card, so a docked
+  // card never covers a control.
   function reposition() {
     const L = LESSONS[lesson];
+    // Layout-thrash batching: read ALL layout values up front, then run the
+    // existing arithmetic and style writes — the interleaved read/write
+    // order below would otherwise force a synchronous reflow per read. The
+    // reads reflect the styles applied by earlier calls (the setW/setMaxW
+    // guards make steady-state frames no-ops, so values are identical
+    // there; a transition frame self-corrects on the next tick).
     const cw = container.clientWidth;
     if (!(cw > 0)) return;
+    const crect = container.getBoundingClientRect();
+    const mb = L.anchor === "sl" ? controls.moduliBox : null;
+    const mrect = mb ? mb.getBoundingClientRect() : null;
+    const panel = anchorPanel(L.anchor);
+    const rect = panel ? panel.getBoundingClientRect() : null;
+    const cardW = card.offsetWidth;
+    const cardH = card.offsetHeight;
+    const ch = container.clientHeight;
     let left;
     let top;
     let bottomDock = false;
@@ -534,11 +563,8 @@ export function makeTutorial(ctx) {
       if (L.anchor === "sl") {
         // the phi lesson (user request 2026-09-18): float to the RIGHT of
         // the Moduli Coordinates panel, overlaying the Parameters card
-        const mb = controls.moduliBox;
         if (mb) {
-          const mrect = mb.getBoundingClientRect();
           if (mrect.width > 0 && mrect.height > 0) {
-            const crect = container.getBoundingClientRect();
             setMaxW("340px");
             left = mrect.right - crect.left + 8;
             top = mrect.top - crect.top;
@@ -547,12 +573,9 @@ export function makeTutorial(ctx) {
         }
       }
       if (!ok) {
-        const panel = anchorPanel(L.anchor);
         if (panel) {
-          const rect = panel.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
             setMaxW(Math.min(340, rect.width) + "px");
-            const crect = container.getBoundingClientRect();
             left = rect.left - crect.left;
             top = rect.bottom - crect.top + 8;
             ok = true;
@@ -562,22 +585,21 @@ export function makeTutorial(ctx) {
       if (!ok) {
         // corner dock: top-right, below the Tutorial button
         setMaxW("340px");
-        left = cw - Math.min(340, card.offsetWidth) - 12;
+        left = cw - Math.min(340, cardW) - 12;
         top = 8;
       }
     }
     // reserve the band below the content sized to the card, so the docked
     // card can always sit below every panel without covering a control
-    const h = card.offsetHeight;
+    const h = cardH;
     const pad = h + 12;
     if (pad !== lastPad) {
       lastPad = pad;
       container.style.paddingBottom = pad + "px";
     }
-    const ch = container.clientHeight;
     if (bottomDock) top = Math.max(0, ch - h - 8);
     // clamp within the container
-    const w = card.offsetWidth;
+    const w = cardW;
     left = Math.min(Math.max(4, left), Math.max(4, cw - w - 4));
     top = Math.min(Math.max(4, top), Math.max(4, ch - h - 4));
     if (Math.abs(left - lastLeft) > 1 || Math.abs(top - lastTop) > 1) {
@@ -596,11 +618,17 @@ export function makeTutorial(ctx) {
       // LIVE gating (user request 2026-09-18): Next is enabled only while
       // the predicate HOLDS — moving the sliders off the passing state
       // disables it again. `done` stays latched only for control unlocks.
+      // Per-frame DOM writes are guarded: each write fires only when the
+      // value differs from the node's currently applied one (render() and
+      // markDone() also write these nodes, so the applied values themselves
+      // are the source of truth, not a shadow cache).
       const pass = L.predicate(controls);
       if (pass && !done) markDone();
-      nextBtn.disabled = !pass;
-      if (!pass) taskEl.textContent = "Task: " + liveTaskText();
-      else if (taskEl.textContent !== "Task complete! \u2713") {
+      if (nextBtn.disabled !== !pass) nextBtn.disabled = !pass;
+      if (!pass) {
+        const t = "Task: " + liveTaskText();
+        if (taskEl.textContent !== t) taskEl.textContent = t;
+      } else if (taskEl.textContent !== "Task complete! \u2713") {
         taskEl.textContent = "Task complete! \u2713";
         taskEl.style.color = "";
       }
@@ -665,13 +693,13 @@ export function makeTutorial(ctx) {
     if (lesson > 0) enterLesson(lesson - 1);
   });
   nextBtn.addEventListener("click", () => {
-    if (lesson < LESSONS.length - 1) enterLesson(lesson + 1);
+    if (lesson === LESSONS.length - 1) exit();
+    else enterLesson(lesson + 1);
   });
   exitBtn.addEventListener("click", () => exit());
 
   return {
     enter: enter,
     exit: exit,
-    isActive: () => active,
   };
 }

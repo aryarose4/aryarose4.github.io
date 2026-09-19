@@ -41,13 +41,13 @@ import {
   attachmentRs,
   PARAB_FOCAL,
   PHI_CAP,
+  PHI_K,
   T_NEAR_INF,
   CAP_BAND_R,
   CAP_BAND_TH,
   CAP_NEAR_INF_W,
   T_PEEK_LO,
   T_PEEK_HI,
-  PERM,
   spherePoint,
   pairArea,
   pairRadius,
@@ -86,7 +86,7 @@ function finite3(v) {
 function phiOf(t) {
   if (t <= 0) return 0;
   if (t >= 1) return PHI_CAP;
-  return Math.min(Math.atan((0.5 * t) / (1 - t)), PHI_CAP);
+  return Math.min(Math.atan((PHI_K * t) / (1 - t)), PHI_CAP);
 }
 
 // In-chamber check via chamberInterval (the widget's lock criterion).

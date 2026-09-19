@@ -84,6 +84,14 @@ export const T_PEEK_HI = 0.97;
 // The old stratum ghost opacity (STRAT_GHOST_OPACITY) is gone — the unified
 // two-state styling in makeSideView uses EXT_UNHI_OPACITY (2026-09-15).
 
+// Highlight-lag time constant (seconds): the exponential-lag glow factor
+// 1 - exp(-dt/GLOW_TAU) shared by the exterior-sphere, central-sphere,
+// stratum and central-paraboloid highlight weights (~80 ms lag).
+const GLOW_TAU = 0.08;
+function glowFactor(dt) {
+  return 1 - Math.exp(-dt / GLOW_TAU);
+}
+
 // Task 5 (2026-09-15): the central -> exterior flow transition. The central
 // branch captures toward a mapped attachment whenever (r, theta) sits
 // within the capture band of it: poles measure |r - 0| / |r - 1| against
@@ -116,6 +124,12 @@ export const CAP_NEAR_INF_W = 0.5;
 export const PERM = [0, 1, 3, 2];
 
 const Y_HAT = [0, 1, 0];
+
+// Guide-arc sample count, SHARED by the pure flow layer (flowState's arc
+// sampling below) and the browser factory (makeSideView's arcPos buffer
+// and setArc's loop — one constant instead of three literals to keep in
+// sync). setArc clamps a longer st.arc by repeating its last point.
+const ARC_N = 33;
 
 // Attachment-point parallel-pair probe thresholds: a slot qualifies when
 // its pair sine is < PARALLEL_TOL and at least PARALLEL_RATIO times
@@ -170,7 +184,7 @@ function unit3(a) {
 // meridian. R is required (callers pass centralRadius(beta)).
 export function spherePoint(r, theta, R) {
   const psi = Math.PI * r;
-  return [R * Math.sin(psi) * Math.cos(theta), -R * Math.cos(psi), R * Math.sin(psi) * Math.sin(theta)];
+  return [R * Math.sin(psi) * Math.cos(theta), -R * Math.cos(psi), -R * Math.sin(psi) * Math.sin(theta)];
 }
 
 // (PI/2) * (sum of beta off I - sum over I). Chamber shorts guarantee a
@@ -235,7 +249,6 @@ export function flowState(r, theta, t, beta, chamberShorts, extMap, gamma, strat
   // attachment point, exterior center and paraboloid apex sits on THIS R.
   const R = centralRadius(beta);
 
-  const ARC_N = 33;
   // Shared exterior-sphere frame builder for attachment k (used by the
   // exact exterior branch below and by the central branch's capture
   // blend; identical formulas, so both paths keep the pre-refactor
@@ -547,9 +560,16 @@ function pairSine(edges, a, b) {
 //   parab      — REMOVED 2026-09-15 (task 3); since 2026-09-17 the central
 //                paraboloid uses the ext palette exactly like the stratum
 //                paraboloid (user request: match the exterior treatment)
-//   arc        — guide-arc color (default 0x808080)
-  //   border     — CSS color for the host border (default "#cfd4da")
-//   caption    — reserved for future labels; accepted, currently unused
+//                (the guide arc is dot-colored since 2026-09-16 — no arc key)
+//   border     — CSS color for the host border (default "#cfd4da")
+//   caption    — host-border color while the view is hovered (default
+//                "#666666"; applyColors swaps `border` for it on setHover)
+// Lambert-surface factory shared by the sphere / paraboloid materials; the
+// full options object passes through unchanged (no injected defaults).
+function lambert(opts) {
+  return new THREE.MeshLambertMaterial(opts);
+}
+
 export function makeSideView(host, opts) {
   if (typeof THREE === "undefined" || typeof THREE.OrbitControls === "undefined") return null;
   opts = opts || {};
@@ -564,7 +584,6 @@ export function makeSideView(host, opts) {
       ext: p.ext === undefined ? 0xffffff : p.ext,
       extHi: p.extHi === undefined ? 0xffffff : p.extHi,
       dot: p.dot === undefined ? 0x000000 : p.dot,
-      arc: p.arc === undefined ? 0x808080 : p.arc,
       border: p.border === undefined ? "#cfd4da" : p.border,
       caption: p.caption === undefined ? "#666666" : p.caption,
     };
@@ -586,7 +605,7 @@ export function makeSideView(host, opts) {
   // Framed for the formula-driven central radius (~0.25 at the widget's
   // default beta, vs the old placeholder 1): pull the camera in so the
   // portrait fills a comparable fraction of the view.
-  camera.position.set(0.85, 0.5, 1.0);
+  camera.position.set(1.05, 0.62, 1.25);
   camera.lookAt(0, 0, 0);
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -601,7 +620,7 @@ export function makeSideView(host, opts) {
   // 0.92) while the dot is on the central branch, unhighlighted (0.32)
   // once an exterior sphere or its stratum owns the dot. depthWrite stays
   // off so the opaque dot drawn underneath always shows through the blend.
-  const centralMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false });
+  const centralMat = lambert({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false });
   const central = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), centralMat);
   // initial guess until the widget's first update() supplies beta
   // (0.25 = the default beta's formula radius)
@@ -620,7 +639,7 @@ export function makeSideView(host, opts) {
   const EXT_UNHI_OPACITY = 0.32;
   const exts = [];
   for (let k = 0; k < 3; k++) {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: EXT_UNHI_OPACITY, depthWrite: false });
+    const mat = lambert({ color: 0xffffff, transparent: true, opacity: EXT_UNHI_OPACITY, depthWrite: false });
     const mesh = new THREE.Mesh(extGeom, mat);
     mesh.visible = false;
     scene.add(mesh);
@@ -640,6 +659,9 @@ export function makeSideView(host, opts) {
   // it has (both palette-driven so light mode adapts).
   const PARA_A = 28;
   const PARA_R = 14;
+  // Fixed-topology paraboloid mesh: a PARA_A x PARA_R polar grid whose
+  // vertices fillParaboloid rewrites from the flowState frame; invisible
+  // until first filled. Returns {pos, geom, mesh}.
   function makeParaMesh(mat) {
     const pos = new Float32Array(PARA_A * PARA_R * 3);
     const idx = [];
@@ -664,7 +686,7 @@ export function makeSideView(host, opts) {
   // far side through the surface and produced odd shading artifacts)
   // Lambert surface in the ext palette, lerping to the highlight on
   // climb. Same two opacities as the spheres.
-  const paraMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: EXT_UNHI_OPACITY, side: THREE.FrontSide, depthWrite: false });
+  const paraMat = lambert({ color: 0xffffff, transparent: true, opacity: EXT_UNHI_OPACITY, side: THREE.FrontSide, depthWrite: false });
   const para = makeParaMesh(paraMat);
   const paraMesh = para.mesh;
   // Stratum material (2026-09-16): styled EXACTLY like the exterior spheres —
@@ -672,7 +694,7 @@ export function makeSideView(host, opts) {
   // (ext base, lerping to the extHi highlight), so the stratum reads as one
   // of the sphere family rather than the old double-sided "half-shaded"
   // shaded dish. Both palette-driven, so light mode adapts.
-  const stratMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.FrontSide, depthWrite: false });
+  const stratMat = lambert({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.FrontSide, depthWrite: false });
   const strat = makeParaMesh(stratMat);
   const stratMesh = strat.mesh;
   let stratGlow = 0;
@@ -680,7 +702,7 @@ export function makeSideView(host, opts) {
   // Guide arc (the flow boundary, 2026-09-16): a single clean black line
   // tracing up the surface the dot climbs, replacing the old half-shaded
   // semi-transparent grey arc. Opaque, dot-colored.
-  const arcPos = new Float32Array(33 * 3);
+  const arcPos = new Float32Array(ARC_N * 3);
   const arcGeom = new THREE.BufferGeometry();
   arcGeom.setAttribute("position", new THREE.BufferAttribute(arcPos, 3));
   const arcMat = new THREE.LineBasicMaterial({ color: 0x000000 });
@@ -696,8 +718,16 @@ export function makeSideView(host, opts) {
   let paraClimb = 0;
   // Camera-pan target helpers (task 6).
   const ORIGIN = [0, 0, 0];
+  // lerp3 writes into a reused scratch vector (per-frame allocation churn):
+  // its only two call sites sit in the camera-pan block of the render loop
+  // and consume the result immediately (at most one call per frame), so a
+  // single shared buffer is safe. Same values as the old fresh-array return.
+  const panTgt = [0, 0, 0];
   function lerp3(a, b, f) {
-    return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+    panTgt[0] = a[0] + (b[0] - a[0]) * f;
+    panTgt[1] = a[1] + (b[1] - a[1]) * f;
+    panTgt[2] = a[2] + (b[2] - a[2]) * f;
+    return panTgt;
   }
   // Central-sphere highlight state (spec 1): 1 while the dot is on the
   // central branch (scaled down by the capture weight during the
@@ -740,9 +770,12 @@ export function makeSideView(host, opts) {
   ro.observe(host);
   resize();
 
+  // Guide arc: copy the flowState arc polyline (st.arc) into the shared
+  // arcPos buffer — ARC_N samples (shared constant above); a longer st.arc
+  // clamps to its last point, a shorter one would leave stale vertices.
   function setArc(st) {
     const a = st.arc;
-    for (let i = 0; i < 33; i++) {
+    for (let i = 0; i < ARC_N; i++) {
       const p = a[Math.min(i, a.length - 1)];
       arcPos[3 * i] = p[0];
       arcPos[3 * i + 1] = p[1];
@@ -752,6 +785,10 @@ export function makeSideView(host, opts) {
     arcGeom.computeBoundingSphere();
   }
 
+  // Fill a makeParaMesh target from the flowState paraboloid frame P
+  // ({apex, u, v, n, f, cap}): polar grid, radial extent rhoMax =
+  // f*tan(cap) so the drawn mesh reaches the frame's cap radius, height
+  // z = rho^2/(2f) above the apex along the normal.
   function fillParaboloid(target, P) {
     const pos = target.pos;
     const geom = target.geom;
@@ -878,7 +915,7 @@ export function makeSideView(host, opts) {
       const branchTarget = place !== null && k === activeAtt && !stratumOnly ? 1 : 0;
       const capTarget = place !== null && k === capK ? capW : 0;
       const target = Math.max(branchTarget, capTarget);
-      e.glow += (target - e.glow) * (1 - Math.exp(-dt / 0.08));
+      e.glow += (target - e.glow) * glowFactor(dt);
       if (place) {
         e.mesh.visible = true;
         e.mesh.position.set(place.center[0], place.center[1], place.center[2]);
@@ -914,7 +951,7 @@ export function makeSideView(host, opts) {
         centralTarget = Math.max(centralTarget, f * f * (3 - 2 * f));
       }
     }
-    centralHi += (centralTarget - centralHi) * (1 - Math.exp(-dt / 0.08));
+    centralHi += (centralTarget - centralHi) * glowFactor(dt);
     centralMat.color.setHex(p.sphere);
     centralMat.opacity = EXT_UNHI_OPACITY + (EXT_WHITE_OPACITY - EXT_UNHI_OPACITY) * centralHi;
 
@@ -927,7 +964,7 @@ export function makeSideView(host, opts) {
     // exact branch switch. The mesh lerps from the ext base to the
     // highlight (extHi) with stratGlow.
     const stratGlowTarget = lastState && lastState.kind === "stratum" ? 1 : 0;
-    stratGlow += (stratGlowTarget - stratGlow) * (1 - Math.exp(-dt / 0.08));
+    stratGlow += (stratGlowTarget - stratGlow) * glowFactor(dt);
     let stratGhost = 0;
     if (lastState && lastState.stratum && (lastState.kind === "exterior" || lastState.capture)) {
       const ramp =
@@ -953,7 +990,7 @@ export function makeSideView(host, opts) {
     // exterior sphere continuously.
     const showPara = lastShowParab && lastState && lastState.paraboloid !== null;
     const paraClimbTarget = showPara && lastT > 1e-9 ? 1 : 0;
-    paraClimb += (paraClimbTarget - paraClimb) * (1 - Math.exp(-dt / 0.08));
+    paraClimb += (paraClimbTarget - paraClimb) * glowFactor(dt);
     paraMat.color.setHex(p.ext).lerp(extHiCol, paraClimb);
     paraMat.opacity =
       (EXT_UNHI_OPACITY + (EXT_WHITE_OPACITY - EXT_UNHI_OPACITY) * paraClimb) * (1 - capW);
@@ -997,6 +1034,7 @@ export function makeSideView(host, opts) {
   }
   loop();
 
+  // Teardown hook; the widget keeps the side view for the page lifetime and never calls it.
   function dispose() {
     disposed = true;
     ro.disconnect();

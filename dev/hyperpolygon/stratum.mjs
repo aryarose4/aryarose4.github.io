@@ -32,6 +32,7 @@ import {
   cycleIndex,
 } from "./solver.js";
 import { shortSubsets } from "./chambers.js";
+import { PERM } from "./sideview.js";
 
 let failures = 0;
 let checks = 0;
@@ -292,7 +293,6 @@ console.log("[C] mu_SL identities + monotonicity");
 // [D] PERMUTE_23 call pattern
 console.log("[D] permute call pattern");
 {
-  const PERM = [0, 1, 3, 2];
   for (const e of POOL) {
     const beta = e.beta;
     const shorts = shortSubsets(beta);

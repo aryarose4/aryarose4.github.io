@@ -42,6 +42,9 @@ const SERVO_SIN_MIN = 0.25; // min |sin(angle between v1 and chord)| for servo t
 // stays where it landed.
 const JUMP_ROT_MIN = 0.2; // rad, best-fit rotation qualifying as a jump
 const JUMP_RESID_FRAC = 0.05; // residual/scale ceiling for calling it rigid
+// The wrapped ~2pi near-identity fit the degenerate class produces must NOT
+// count as a jump (only fits strictly below this angle are absorbed).
+const JUMP_WRAP_EXCL = 2 * Math.PI - 0.6;
 // A one-frame step of the DISPLAYED azimuth larger than this adopts that
 // pose as the new servo reference (non-rigid data steps, e.g. the stratum
 // entry's intrinsic residual shape change) instead of spinning to the old
@@ -81,6 +84,7 @@ function qInv(q) {
   return [-q[0], -q[1], -q[2], q[3]];
 }
 
+// normalize a quaternion; zero-norm safe (falls back to the identity)
 function normalizeQ(q) {
   const n = Math.hypot(q[0], q[1], q[2], q[3]);
   if (n < 1e-300) return [0, 0, 0, 1];
@@ -206,6 +210,7 @@ export function bestFitRotation(P, dP) {
   return { q: bestQ, angle: angle, residual: bestRes, scale: scale };
 }
 
+// wrap an angle (difference) to [-pi, pi)
 function wrapToPi(x) {
   return x - 2 * Math.PI * Math.round(x / (2 * Math.PI));
 }
@@ -239,6 +244,8 @@ function shortestArcQuat(a, b) {
   return [k[0] * sn, k[1] * sn, k[2] * sn, Math.cos(half)];
 }
 
+// spherical interpolation between unit quaternions (sign-aligned so the
+// short arc is taken; linear fallback renormalized when d > 0.9995)
 function slerp(q1, q2, f) {
   let d = q1[0] * q2[0] + q1[1] * q2[1] + q1[2] * q2[2] + q1[3] * q2[3];
   let b = q2;
@@ -276,6 +283,53 @@ export function makeOrientor() {
   let prevWalk = null;
   let targetPsi = 0;
   let lastPsi = null;
+
+  // Reused scratch buffers (per-frame allocation churn): the walk copies
+  // and the per-frame walk delta are written in place instead of being
+  // rebuilt with .map/.slice every animation frame. The widget may mutate
+  // the array it hands us later, so the copy stays DEEP (per-component) —
+  // only the buffer objects are reused. Walks are 9 points; the buffers
+  // still resize safely if a caller ever passes a different length.
+  let walkBuf = null;
+  let dPBuf = null;
+  function storeWalk(vertices) {
+    if (walkBuf === null || walkBuf.length !== vertices.length) {
+      walkBuf = new Array(vertices.length);
+      for (let k = 0; k < vertices.length; k++) walkBuf[k] = [0, 0, 0];
+    }
+    for (let k = 0; k < vertices.length; k++) {
+      const p = vertices[k];
+      const dst = walkBuf[k];
+      dst[0] = p[0];
+      dst[1] = p[1];
+      dst[2] = p[2];
+    }
+    return walkBuf;
+  }
+  // fill dPBuf with vertices - prevWalk per component; returns dPmax = the
+  // largest |delta| component (the exact-zero guard of step 4.5)
+  function fillDp(vertices) {
+    if (dPBuf === null || dPBuf.length !== vertices.length) {
+      dPBuf = new Array(vertices.length);
+      for (let k = 0; k < vertices.length; k++) dPBuf[k] = [0, 0, 0];
+    }
+    let dPmax = 0;
+    for (let k = 0; k < vertices.length; k++) {
+      const p = vertices[k];
+      const q = prevWalk[k];
+      const dst = dPBuf[k];
+      dst[0] = p[0] - q[0];
+      dst[1] = p[1] - q[1];
+      dst[2] = p[2] - q[2];
+      const ax = Math.abs(dst[0]);
+      if (ax > dPmax) dPmax = ax;
+      const ay = Math.abs(dst[1]);
+      if (ay > dPmax) dPmax = ay;
+      const az = Math.abs(dst[2]);
+      if (az > dPmax) dPmax = az;
+    }
+    return dPmax;
+  }
 
   // azimuth of the displayed v1 about the chord axis (+y), measured in the
   // xz-plane from +x toward +z (null when the servo must not run: v1
@@ -317,7 +371,7 @@ export function makeOrientor() {
 
       // 3. initialize: pin the chord, then canonicalize the twist once
       if (Q === null) {
-        prevWalk = vertices.map((p) => p.slice());
+        prevWalk = storeWalk(vertices);
         lastPsi = null;
         targetPsi = 0;
         if (frozen) return [0, 0, 0, 1];
@@ -332,7 +386,7 @@ export function makeOrientor() {
       // tracking, so the first unfrozen frame sees the accumulated walk
       // motion rather than a mis-timed one-frame spike)
       if (frozen) {
-        prevWalk = vertices.map((p) => p.slice());
+        prevWalk = storeWalk(vertices);
         lastPsi = null;
         return Q.slice();
       }
@@ -352,21 +406,28 @@ export function makeOrientor() {
       // steps deform the walk (residual above the ceiling) and are left
       // to the transport, as before.
       if (prevWalk !== null) {
-        const dP = vertices.map((p, k) => [
-          p[0] - prevWalk[k][0],
-          p[1] - prevWalk[k][1],
-          p[2] - prevWalk[k][2],
-        ]);
-        const bf = bestFitRotation(prevWalk, dP);
-        if (
-          bf.angle > JUMP_ROT_MIN &&
-          bf.angle < 2 * Math.PI - 0.6 &&
-          bf.residual / bf.scale < JUMP_RESID_FRAC
-        ) {
-          Q = normalizeQ(qMul(Q, qInv(bf.q)));
+        const dPmax = fillDp(vertices);
+        // Exact-zero guard: when the walk did not move at all (dPmax === 0,
+        // the steady state between slider solves) the best fit is the
+        // identity, whose absorption reproduces Q up to signed-zero
+        // differences that no display path or the fingerprint's string
+        // serialization can distinguish — skipping the block is
+        // arithmetically a no-op. (For a non-degenerate 3D walk the
+        // identity is also the UNIQUE zero-residual fit, so the old
+        // absorption conditional could not have fired here anyway; the
+        // guard merely avoids the Horn machinery on every idle frame.)
+        if (dPmax > 0) {
+          const bf = bestFitRotation(prevWalk, dPBuf);
+          if (
+            bf.angle > JUMP_ROT_MIN &&
+            bf.angle < JUMP_WRAP_EXCL &&
+            bf.residual / bf.scale < JUMP_RESID_FRAC
+          ) {
+            Q = normalizeQ(qMul(Q, qInv(bf.q)));
+          }
         }
       }
-      prevWalk = vertices.map((p) => p.slice());
+      prevWalk = storeWalk(vertices);
 
       // Servo azimuth measurement + its data-step re-anchor, tracked every
       // frame (idle or not) so a step that arrives during a drag still

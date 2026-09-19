@@ -122,6 +122,7 @@ export function clampToChamber(beta) {
   return anyMoved;
 }
 
+// lexicographic order on index subsets (the exact-tie tie-break)
 function lexLess(a, b) {
   for (let k = 0; k < Math.min(a.length, b.length); k++) {
     if (a[k] !== b[k]) return a[k] < b[k];
@@ -129,6 +130,8 @@ function lexLess(a, b) {
   return a.length < b.length;
 }
 
+// the SHORT side of a split given both sums: the smaller sum; on an exact
+// tie the lex-smaller side (see lexLess)
 function pickShort(I, comp, sI, sC) {
   if (sI < sC) return I;
   if (sC < sI) return comp;

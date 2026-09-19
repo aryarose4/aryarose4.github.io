@@ -178,7 +178,8 @@ fragility remain.)
   the re-pin arc per frame) plus an idle-servo spin — a visible
   discontinuous jump during chamber/stratum transitions (measured:
   0.5-1.1 rad one-frame steps). Fix in update(): step 4.5 runs a Horn
-  best-fit rotation `bestFitRotation` (exported for probes; Jacobi
+  best-fit rotation `bestFitRotation` (exported; consumed by the
+  fingerprint harness's rigid-jump path; Jacobi
   sweeps + best-of-4 eigenvector scoring — the solver walks are
   near-planar with vertices through the origin, so the Horn matrix has
   tied eigenclusters and a single pick returns garbage, the same hazard
@@ -315,7 +316,7 @@ fragility remain.)
     and the SL(2,C) coordinatewise e^{i·phi} rotation is the BYPRODUCT
     (updatePhiViews; u_i = x_i·y_i is linear in y). The side view's phi
     feed (level circles) is unchanged.
-  - Beta panel: defaults (0.5, 0.5, 0.5, 0.25); DISPLAY ORDER beta0,
+  - Beta panel: defaults (0.4, 0.5, 0.5, 0.25, task 21); DISPLAY ORDER beta0,
     beta2, beta1, beta3 (the beta_1/beta_2 screen swap, user request
     2026-09-15 — labels stay with their values, the beta[] indexing is
     untouched); applyBetaDrag per input
@@ -379,7 +380,7 @@ fragility remain.)
     and both SL canvases; palette border hexes UNIFIED with
     --hp-box-bd (#cfd4da light / #4a525e dark; sideview.js default
     updated to match).
-  - SL(2,C) view: collapsed <details> ("show SL(2,ℂ) polygons"), Re/Im
+  - SL(2,C) view: collapsed <details> ("Show sl(2,ℂ) polygons"), Re/Im
     300px canvases (leg-colored edges, gray closing segment, own
     OrbitControls, rendered only while open). At t = 0 in interior
     chambers both degenerate to the origin — correct (mu_SL = 0 on the
@@ -442,6 +443,17 @@ fragility remain.)
     purity).
   - `validate.mjs` — spot-checks vs `mathematica/hyperpolygonDataPolar`
     (only where that 137 MB file exists).
+  - `fingerprint.mjs` — bit-exact behavioral fingerprint of the live
+    modules (solver grid incl. walls/endpoints/locus/permute, closed
+    forms, chambers, orientation incl. the rigid-jump path, side-view
+    flow) vs `fingerprint-golden.json`; `check` must print
+    "bit-identical" after any refactor; regenerate with `golden` only
+    for ENUMERATED intentional changes. Machine-local golden (V8/FP
+    dependent); NOT part of run-validation.sh. Added by task 27.
+  - `bench.mjs` — hot-path micro-benchmarks (solve, vertices,
+    residuals, orientor idle/active, chambers, flowState). Task 27.
+  - `README.md` — harness guide: module map, invariants, gate
+    commands. Task 27.
 
 ## Validation expectations
 
@@ -806,7 +818,7 @@ Tracked work items; keep statuses updated.
     jumps: 0.0000 pose motion vs 0.5-1.1 rad before, 0 fires on
     continuous paths; orient battery 6/6 green; full suite exit 0).
  24. DONE (2026-09-17, USER CONFIRMED): game-like tutorial mode,
-     COMPLETE (9 lessons 0-8). Milestones 1-2 as before; the 2026-09-17
+     COMPLETE (8 lessons 0-7). Milestones 1-2 as before; the 2026-09-17
      completion batch (user requests): (1) all lesson text brief (details
      deferred to the "How it works" explainer, task #25); (2) Next is
      task-gated on EVERY lesson — the Skip button is removed; (3) new
@@ -822,8 +834,9 @@ Tracked work items; keep statuses updated.
      real recap (free play, all controls). enterLesson leaves the stratum
      first EXCEPT for the phi lesson (2026-09-18 user request: lesson 3
      ends IN the stratum — phi stays there, lim kept in its control list,
-     and its card anchors BELOW the SL(2,C) panel (anchor "sl" ->
-     controls.slDetails) so the views the task needs stay visible).
+     and its card floats to the RIGHT of the Moduli Coordinates panel for
+     the "sl" anchor (anchorPanel("sl") returns null; the SL(2,C) views
+     the task needs stay visible beside it).
       Headless fake-ctx smoke test (/tmp/kilo/tut-test.mjs, uncommitted)
       walks all lessons incl. ordering/gating/Back/exit — 32 checks PASS
       (2026-09-18). widget.js untouched; full suite exit 0.
@@ -840,7 +853,68 @@ Tracked work items; keep statuses updated.
  25. TODO: "How it works" Kempf–Ness mini-game explainer (separate
      button next to Tutorial; see the plan section above). 7-slider
      special case; give-up button fills the solver's values. Will carry
-     the detailed explanations removed from the tutorial text.
+      the detailed explanations removed from the tutorial text.
+ 26. DONE (2026-09-18, PENDING USER VISUAL CHECK): SL(2,C) boundary
+      phi-invariance (user request) — display-layer only, widget.js.
+      `phiBoundaryWeight()` (PHI_BW = 0.1 smoothstep ramps): the SL(2,C)
+      canvases' effective rotation angle is g_eff = phi * (1 - w(t)) with
+      w = max(w0, w1), w0 = 1 - smoothstep(0, PHI_BW, t) (the central
+      sphere t = 0 — vacuous in interior chambers where the polygons sit
+      at the origin, the correction that matters in edge-dominant
+      EXTERIOR chambers) and w1 = smoothstep(1 - PHI_BW, 1, t) (the
+      exterior-sphere tips / stratum rim t -> infinity). At the boundary
+      slices w = 1 exactly (bit-exact static: cos 0 = 1); the weight uses
+      the RAW display t (1 allowed, side-view convention). The y matrix
+      READOUT keeps the FULL e^{i·phi} rotation. The tutorial phi lesson
+      body mentions the boundary invariance. Also: the SL(2,C) <details>
+      summary capitalized to "Show sl(2,ℂ) polygons" (user request).
+      Solver untouched; full suite exit 0; tutorial smoke 32/32.
+ 27. DONE (2026-09-19): audit-driven cleanup batch (zero regressions;
+     fingerprint bit-identical throughout). (1) DOCS: repaired the
+     truncated PERMUTE_23 header + garbled makeHyperpolygon paragraph
+     (solver), stale caption comment + misindent (sideview), stale
+     "scale buttons" comment (widget), "wiht" typo (tutorial), named
+     JUMP_WRAP_EXCL (2pi-0.6 jump gate), filled the worst docstring gaps
+     (exteriorPairAt, solveAndDraw, makeSlider, makeSlicePlot,
+     fillParaboloid/setArc/makeParaMesh, ARC_N cross-ref, tutorial
+     reposition/enterLesson/snapOf), project-page typos, new
+     dev/hyperpolygon/README.md. (2) DEAD CODE removed (all
+     grep-verified): widget legSine, stratum.S/.comp, unused
+     hooks.onCrossWall/onStratum/onSide channels, 3 unused tutorial ctx
+     entries, SUBSCRIPTS/SUB aliases (SUBS kept), PALETTES.arc key;
+     tutorial L.locked branch, taskText fallback, isActive(); harness
+     unused imports (star cycleSig, sideview PERM, edge muC);
+     stratum.mjs local PERM -> import; sideview.mjs phi 0.5 -> PHI_K.
+     KEPT after audit self-correction: flowState .slot (battery-asserted
+     at sideview.mjs [E]/[STR] — the audit's "unread" claim was wrong)
+     and makeSideView dispose (documented teardown API). (3) BIT-EXACT
+     DEDUP: solver finishPair() replaces 5 identical result-assembly
+     blocks; pairSlotOf (starSlots/cycleSlots); widget smoothstep x3 ->
+     1, viewHeight x2, complement4; sideview lambert factory +
+     GLOW_TAU/glowFactor x4; tutorial breakingCount. kabschRotation /
+     bestFitRotation Horn cores NOT merged (input/output shapes differ);
+     lerp3 NOT merged (op order). (4) EFFICIENCY (bench.mjs): orientor
+     idle update 7.9us -> 1.5us (scratch prevWalk/dP + exact-zero
+     bestFit skip — identity absorption is a no-op), active path 6.9us;
+     widget updateEdgeColors zero-alloc fSeg + applied-value skip with
+     edgeColorsDirty invalidation (applyColors sets it; sole color
+     writer verified); label CanvasTexture cache (4 canvas+texture
+     alloc/dispose per slider event -> 0 steady-state); IDLE_YES/NO
+     singletons; tutorial tick write-guards + reposition read/write
+     batching (layout thrash gone); sideview pan lerp3 scratch. (5)
+     TUTORIAL FIX (user-visible): lesson-1 progress line's r checkmark
+     was unreachable (rDone = r >= 0.49 vs the predicate window
+     0.2..0.48) — aligned to the predicate, label "(0.2 to 0.48)".
+     (6) DISCOVERED, NOT FIXED: BLINK_PERIOD is 0.9 in a
+     performance.now() MS domain (renamed BLINK_PERIOD_MS) — the
+     yellow-parallelism blink plays < 1 frame; harmless but not the
+     visible flash the old "seconds" comment promised. Gates: suite
+     exit 0 after every phase; fingerprint bit-identical (regenerated
+     once, only after P2's enumerated flowState-shape change which was
+     then SKIPPED — golden byte-unchanged); widget stub 0 failures;
+     tutorial smoke signature 2 FAILURES (stale L0-gate/L6-completes
+     checks, predating the 2026-09-18 renumbering).
+
 
 ## Status / next milestone
 

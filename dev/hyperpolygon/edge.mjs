@@ -31,7 +31,7 @@
 //        check), now also asserting closure
 //   [F]  seeded fuzz over the endpoint bands (r in [0,3e-5] and
 //        [1-3e-5,1] incl. exact endpoints) across betas and t (hard)
-import { makeHyperpolygon, muSU2Coords, muU1Error, muC } from "./solver.js";
+import { makeHyperpolygon, muSU2Coords, muU1Error } from "./solver.js";
 
 function cAbs2(a) {
   return a[0] * a[0] + a[1] * a[1];

@@ -82,6 +82,9 @@ function mat2trace(T) {
   return cAdd(T[0][0], T[1][1]);
 }
 
+// One su(2) coordinate of B: 0.5 Tr(IB B) with IB = i*b_k (IB1..IB3 above)
+// extracts the coefficient along the basis direction b_k; the trace part is
+// invisible to all three functionals. traceFreeCoords evaluates these.
 function su2Component(IB, B00, B01, B10, B11) {
   const B = [
     [B00, B01],
@@ -501,6 +504,8 @@ function newton(F, p0, norm = normInf3) {
   return { p, residual: n0 };
 }
 
+// Solve a real 3x3 linear system J x = rhs by LU with partial pivoting;
+// returns null when the matrix is numerically singular.
 function solveReal3(J, rhs) {
   const n = 3;
   const A = J.map((row) => row.slice());
@@ -824,6 +829,11 @@ export function exteriorPair(r, theta, beta, j) {
   return null;
 }
 
+// Closed-form builder behind exteriorPair (including its degenerate-locus
+// nudge retries): assembles the exterior-branch direction pair at the exact
+// reff and solves the K of the minimum-energy stick. Returns null when the
+// direction weights degenerate (e.g. the (1/2, 0) locus) — the caller then
+// re-evaluates at a tiny r offset.
 function exteriorPairAt(reff, theta, beta, j) {
   const x0 = buildX(reff, theta, beta[0]);
   const Y = exteriorYDirection(reff, theta, beta[0]);
@@ -1043,19 +1053,7 @@ export function stratumPair(t1, beta, I, permute = false) {
     buildSide(loI, hiI, false);
   }
   const [xf, yf] = permute ? swapLegs23(x, y) : [x, y];
-  const su2 = muSU2Coords(x, y);
-  return {
-    x: xf,
-    y: yf,
-    vertices: hyperpolygonVertices(xf, yf),
-    sl2: sl2Vertices(xf, yf),
-    accuracy: {
-      su2Norm: Math.hypot(su2[0], su2[1], su2[2]),
-      muU1Error: muU1Error(x, y, beta),
-      muCNorm: Math.max(...muC(x, y).map(cAbs2)) ** 0.5,
-      usedStable: false,
-    },
-  };
+  return finishPair(x, y, xf, yf, beta, false);
 }
 
 // ===== Interior-chamber classification (star reindexing) =====
@@ -1147,6 +1145,36 @@ export function cycleSig(m) {
   ];
 }
 
+// Result assembly shared by stratumPair, starReindexed, cycleReindexed, the
+// makeHyperpolygon exterior branch and solveCore. MUST stay bit-identical to
+// the inlined original: su2 = muSU2Coords(x, y) on the UNpermuted pair first,
+// then vertices/sl2 from the display pair (xd, yd), then the accuracy object
+// in this exact order (same operations, same order, on the same values).
+function finishPair(x, y, xd, yd, beta, usedStable) {
+  const su2 = muSU2Coords(x, y);
+  return {
+    x: xd,
+    y: yd,
+    vertices: hyperpolygonVertices(xd, yd),
+    sl2: sl2Vertices(xd, yd),
+    accuracy: {
+      su2Norm: Math.hypot(su2[0], su2[1], su2[2]),
+      muU1Error: muU1Error(x, y, beta),
+      muCNorm: Math.max(...muC(x, y).map(cAbs2)) ** 0.5,
+      usedStable: usedStable,
+    },
+  };
+}
+
+// Pair-split slot of the leg pair {a, b} (5: {0,1}|{2,3}, 6: {0,2}|{1,3},
+// 7: {0,3}|{1,2}) — shared body of the slotOf lambdas in starSlots/cycleSlots.
+function pairSlotOf(a, b) {
+  const key = Math.min(a, b) * 4 + Math.max(a, b);
+  if (key === 1 || key === 11) return 5;
+  if (key === 2 || key === 7) return 6;
+  return 7; // {0,3} or {1,2}
+}
+
 // The exterior-sphere attachment-slot rule for the star chamber containing
 // beta (null outside star chambers): derived from the coherent reindexing
 // starSig(j) — the straight pair at (r, theta) = (0,0), (1/2,0), (1,0) is
@@ -1160,13 +1188,7 @@ export function starSlots(beta) {
   const j = starIndex(beta);
   if (j < 0) return null;
   const sig = starSig(j);
-  const slotOf = (a, b) => {
-    const key = Math.min(a, b) * 4 + Math.max(a, b);
-    if (key === 1 || key === 11) return 5;
-    if (key === 2 || key === 7) return 6;
-    return 7; // {0,3} or {1,2}
-  };
-  return [slotOf(sig[0], j), slotOf(sig[2], j), slotOf(sig[1], j)];
+  return [pairSlotOf(sig[0], j), pairSlotOf(sig[2], j), pairSlotOf(sig[1], j)];
 }
 
 // Star-chamber solve by internal reindexing: sig[i] = the user leg solved in
@@ -1190,19 +1212,7 @@ function starReindexed(r, theta, t, beta, j, permute) {
   const x = [0, 1].map((row) => inv.map((c) => inner.x[row][c]));
   const y = inv.map((c) => inner.y[c]);
   const [xd, yd] = permute ? swapLegs23(x, y) : [x, y];
-  const su2 = muSU2Coords(x, y);
-  return {
-    x: xd,
-    y: yd,
-    vertices: hyperpolygonVertices(xd, yd),
-    sl2: sl2Vertices(xd, yd),
-    accuracy: {
-      su2Norm: Math.hypot(su2[0], su2[1], su2[2]),
-      muU1Error: muU1Error(x, y, beta),
-      muCNorm: Math.max(...muC(x, y).map(cAbs2)) ** 0.5,
-      usedStable: inner.accuracy.usedStable,
-    },
-  };
+  return finishPair(x, y, xd, yd, beta, inner.accuracy.usedStable);
 }
 
 // The distinguished index of the cycle chamber containing beta: the three
@@ -1233,13 +1243,7 @@ export function cycleSlots(beta) {
   const j = cycleIndex(beta);
   if (j < 0) return null;
   const sig = cycleSig(j);
-  const slotOf = (a, b) => {
-    const key = Math.min(a, b) * 4 + Math.max(a, b);
-    if (key === 1 || key === 11) return 5;
-    if (key === 2 || key === 7) return 6;
-    return 7; // {0,3} or {1,2}
-  };
-  return [slotOf(sig[0], sig[1]), slotOf(sig[1], sig[2]), slotOf(sig[0], sig[2])];
+  return [pairSlotOf(sig[0], sig[1]), pairSlotOf(sig[1], sig[2]), pairSlotOf(sig[0], sig[2])];
 }
 
 // Cycle-chamber solve by internal reindexing (mirror of starReindexed):
@@ -1263,24 +1267,12 @@ function cycleReindexed(r, theta, t, beta, j, permute) {
   const x = [0, 1].map((row) => inv.map((c) => inner.x[row][c]));
   const y = inv.map((c) => inner.y[c]);
   const [xd, yd] = permute ? swapLegs23(x, y) : [x, y];
-  const su2 = muSU2Coords(x, y);
-  return {
-    x: xd,
-    y: yd,
-    vertices: hyperpolygonVertices(xd, yd),
-    sl2: sl2Vertices(xd, yd),
-    accuracy: {
-      su2Norm: Math.hypot(su2[0], su2[1], su2[2]),
-      muU1Error: muU1Error(x, y, beta),
-      muCNorm: Math.max(...muC(x, y).map(cAbs2)) ** 0.5,
-      usedStable: inner.accuracy.usedStable,
-    },
-  };
+  return finishPair(x, y, xd, yd, beta, inner.accuracy.usedStable);
 }
 
-
-// pre-swap of beta plus this module's permute=true output swap, which cancel
-// in the display). Set FALSE to disable the permutation: callers then pass
+// Widget call-pattern switch: when TRUE, the widget pairs a beta leg-2/3
+// pre-swap of beta with this module's permute=true output swap; the two
+// swaps cancel in the display. Set FALSE to disable the permutation: callers then pass
 // beta unchanged and permute = false, so the returned (x, y) is the solved
 // representative for the given beta directly. Either setting keeps the
 // displayed polygon leg j = user beta leg j and mu_U1 = the user beta.
@@ -1307,7 +1299,7 @@ export const PERMUTE_23 = false;
 // unpermuted back to user indexing. The returned pair therefore always has
 // mu_U1 = the given beta and displayed leg k = user leg k; only the polygon
 // traversal order changes with the chamber, same class as the permute swap.
-// unpermute the output. Cycle chambers (starIndex < 0, cycleIndex >= 0, see
+// Cycle chambers (starIndex < 0, cycleIndex >= 0, see
 // below) are reindexed the same way onto the cycle x ansatz
 // [[1,1,1,0],[0, r e^{i theta}, 1-r, 1]] via cycleReindexed / CYCLE_ANSATZ.
 export function makeHyperpolygon(r, theta, t, beta, permute = true) {
@@ -1320,20 +1312,8 @@ export function makeHyperpolygon(r, theta, t, beta, permute = true) {
   if (dom >= 0 && t <= 0) {
     const branchPair = exteriorPair(r, theta, beta, dom);
     if (branchPair !== null) {
-      const su2b = muSU2Coords(branchPair[0], branchPair[1]);
       const [xd, yd] = permute ? swapLegs23(branchPair[0], branchPair[1]) : branchPair;
-      return {
-        x: xd,
-        y: yd,
-        vertices: hyperpolygonVertices(xd, yd),
-        sl2: sl2Vertices(xd, yd),
-        accuracy: {
-          su2Norm: Math.hypot(su2b[0], su2b[1], su2b[2]),
-          muU1Error: muU1Error(branchPair[0], branchPair[1], beta),
-          muCNorm: Math.max(...muC(branchPair[0], branchPair[1]).map(cAbs2)) ** 0.5,
-          usedStable: false,
-        },
-      };
+      return finishPair(branchPair[0], branchPair[1], xd, yd, beta, false);
     }
   }
 
@@ -1455,20 +1435,8 @@ export function solveCore(r, theta, t, beta, permute, ansatz = STAR_ANSATZ) {
   }
 
   const [xf, yf] = pair;
-  const su2 = muSU2Coords(xf, yf);
   const [xd, yd] = permute ? swapLegs23(xf, yf) : [xf, yf];
-  return {
-    x: xd,
-    y: yd,
-    vertices: hyperpolygonVertices(xd, yd),
-    sl2: sl2Vertices(xd, yd),
-    accuracy: {
-      su2Norm: Math.hypot(su2[0], su2[1], su2[2]),
-      muU1Error: muU1Error(xf, yf, beta),
-      muCNorm: Math.max(...muC(xf, yf).map(cAbs2)) ** 0.5,
-      usedStable: usedStable,
-    },
-  };
+  return finishPair(xf, yf, xd, yd, beta, usedStable);
 }
 
 // hyperpolygon vertices in su(2)^*: start at the origin, then for each
