@@ -26,8 +26,10 @@
 // becomes a full-width bottom dock in the same reserved band; placeholder
 // lessons without an anchor fall back to the top-right corner dock.
 //
-// Progress is session-only; exit restores the free-play default state
-// (r = 0.25, default beta, all controls enabled, stratum left).
+// Progress is session-only. ENTERING the tutorial resets every parameter
+// slider to its default (r = 0.25, theta = t = phi = 0, default beta — user
+// request 2026-09-19); EXITING preserves the current slider positions (only
+// the stratum is left, which restores the user's own parked r/theta).
 
 // Number of chamber-inequality boxes currently in the amber ("breaking")
 // state — the shared computation of the beta lesson's live task line and
@@ -117,9 +119,7 @@ export function makeTutorial(ctx) {
       body:
         "\u03c6 applies a gauge phase e<sup>i\u03c6</sup> to the y matrix. " +
         "This change is not reflected in the su(2) polygon, but you can see " +
-        "its effect in the sl(2,C) polygon views \u2014 except at the " +
-        "boundary slices (the central sphere t = 0 and the stratum rim), " +
-        "where the views are \u03c6-invariant. Open that panel and try " +
+        "its effect in the sl(2,C) polygon views. Open that panel and try " +
         "moving \u03c6. Then leave the stratum with the lim t\u21920 button " +
         "and return to the central sphere: t = 0 with 0 < r < 0.5 and " +
         "\u03b8 = 0.",
@@ -175,24 +175,30 @@ export function makeTutorial(ctx) {
 
   // ---- task predicates (stateful ones keep their state on the lesson
   // object; enterLesson re-inits it) ---------------------------------------
-  // Lesson 1 (user request 2026-09-18): the start point (r = 0.25, θ = 0)
-  // already satisfies the target condition, so the predicate additionally
-  // requires that an available slider MOVED — Next enables only after the
-  // user touches r or θ and the target state holds.
+  // Lesson 1 (user request 2026-09-19): the start point (r = 0.25, θ = 0)
+  // already satisfies the target condition, so Next enables only after the
+  // user has SWEPT the sliders — a cumulative travel threshold (total
+  // slider-path length, r + θ contributions) AND the target state must
+  // both hold. The per-frame tick folds the movement since the previous
+  // read into the lesson's accumulator.
+  const SWEEP_MIN = 0.5; // slider units: ~half a full r traversal
   function spacePredicate(c) {
     const st = LESSONS[1];
+    const r = parseFloat(c.rInput.value);
+    const th = parseFloat(c.thetaInput.value);
     if (st._r0 === undefined) {
-      st._r0 = parseFloat(c.rInput.value);
-      st._th0 = parseFloat(c.thetaInput.value);
+      st._r0 = r;
+      st._th0 = th;
+      st._travel = 0;
     }
-    const moved =
-      parseFloat(c.rInput.value) !== st._r0 ||
-      parseFloat(c.thetaInput.value) !== st._th0;
+    st._travel += Math.abs(r - st._r0) + Math.abs(th - st._th0);
+    st._r0 = r;
+    st._th0 = th;
     return (
-      moved &&
-      parseFloat(c.rInput.value) >= 0.2 &&
-      parseFloat(c.rInput.value) <= 0.48 &&
-      Math.abs(parseFloat(c.thetaInput.value)) <= 0.01
+      st._travel >= SWEEP_MIN &&
+      r >= 0.2 &&
+      r <= 0.48 &&
+      Math.abs(th) <= 0.01
     );
   }
   function r1Predicate(c) {
@@ -200,7 +206,10 @@ export function makeTutorial(ctx) {
     const t = parseFloat(c.tInput.value);
     if (st._phase === undefined) st._phase = 0;
     if (st._phase === 0 && c.stratumRef()) st._phase = 1;
-    return st._phase === 1 && t > 0.01;
+    // user request 2026-09-19: the gate holds only WHILE the active
+    // configuration remains inside the stratum — leaving it (lim t→0 or
+    // any other path) disables Next again
+    return st._phase === 1 && c.stratumRef() && t > 0.01;
   }
   function phiPredicate(c) {
     const st = LESSONS[4];
@@ -331,24 +340,43 @@ export function makeTutorial(ctx) {
   function liveTaskText() {
     const L = LESSONS[lesson];
     if (L.id === "space") {
+      const st = LESSONS[1];
       const r = parseFloat(controls.rInput.value);
       const th = parseFloat(controls.thetaInput.value);
+      // staged text (user request 2026-09-19): sweep first, target after —
+      // the travel fraction mirrors the PREDICATE's accumulator (SWEEP_MIN)
+      const travel = st._travel || 0;
+      if (travel < SWEEP_MIN) {
+        return (
+          "sweep r and \u03b8 (" +
+          Math.min(100, Math.round((travel / SWEEP_MIN) * 100)) +
+          "% of " + SWEEP_MIN.toFixed(1) + " slider distance)"
+        );
+      }
       // the check marks must mirror the PREDICATE's completion window
       // (0.2..0.48, below the r = 0.5 snap), not an unreachable threshold
       const rDone = r >= 0.2 && r <= 0.48;
       const thDone = Math.abs(th) <= 0.01;
-      let s = "r = " + r.toFixed(2) + " (0.2 to 0.48)" + (rDone ? " \u2713" : "");
+      let s = "now bring r to " + r.toFixed(2) + " (0.2 to 0.48)" +
+        (rDone ? " \u2713" : "");
       s += "  \u00b7  \u03b8 = " + (th * Math.PI).toFixed(2) + " / 0" + (thDone ? " \u2713" : "");
       return s;
     }
     if (L.id === "tdir") {
       const t = parseFloat(controls.tInput.value);
-      return "t = " + t.toFixed(2) + " / 0.99";
+      return "sweep t upward: t = " + t.toFixed(2);
     }
     if (L.id === "r1") {
+      // staged instructions (user request 2026-09-19), matching the body:
+      // "enter the higher energy Morse stratum" -> "move t > 0 from there"
       const ph = LESSONS[3]._phase || 0;
       const t = parseFloat(controls.tInput.value);
-      if (ph === 0) return "in stratum mode: " + (controls.stratumRef() ? "\u2713" : "press lim t\u2192\u221e (r at 1, \u03b8 = 0, t \u2265 0.9)");
+      if (ph === 0) {
+        return (
+          "enter the higher energy Morse stratum" +
+          (controls.stratumRef() ? " \u2713" : " (r at 1, \u03b8 = 0, t \u2265 0.9, press lim t\u2192\u221e)")
+        );
+      }
       return "move t > 0 from there: t = " + t.toFixed(2);
     }
     if (L.id === "phi") {
@@ -651,6 +679,9 @@ export function makeTutorial(ctx) {
     lastLeft = -1;
     lastTop = -1;
     container.appendChild(card);
+    // start from a clean default state (user request 2026-09-19): every
+    // parameter slider resets to its default when the tutorial begins
+    restoreDefaults();
     hooks.onFrame.push(tick);
     applyGate();
     render();
@@ -663,6 +694,14 @@ export function makeTutorial(ctx) {
     // r slider -> 0.25 via an input event (snaps/readouts stay in sync)
     controls.rInput.value = String(controls.defaultR);
     controls.rInput.dispatchEvent(new Event("input"));
+    // theta and t back to 0 (theta slider is the normalized s in [-1,1])
+    controls.thetaInput.value = "0";
+    controls.thetaInput.dispatchEvent(new Event("input"));
+    controls.tInput.value = "0";
+    controls.tInput.dispatchEvent(new Event("input"));
+    // phi back to 0 (display-only rotation of y; never triggers a solve)
+    controls.phiInput.value = "0";
+    controls.phiInput.dispatchEvent(new Event("input"));
     // beta -> the default tuple through the beta ARRAY (the display order
     // of the sliders on screen is beta0, beta2, beta1, beta3 — never write
     // values through display-order assumptions)
@@ -679,7 +718,11 @@ export function makeTutorial(ctx) {
     container.style.paddingBottom = prevPad;
     lastPad = -1;
     lastMaxW = null;
-    restoreDefaults();
+    // preserve the current slider positions (user request 2026-09-19) —
+    // no reset on exit. Only the stratum is left if active (it owns the
+    // r/theta sliders' disabled state; leaveStratum restores the parked
+    // values, i.e. the user's own positions)
+    if (controls.stratumRef()) controls.leaveStratum();
     setGate(null, null);
     // sync the widget's toggle button label back to "Tutorial" (user
     // request 2026-09-18: exiting from the card's Exit button must reset

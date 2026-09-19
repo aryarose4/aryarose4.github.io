@@ -603,9 +603,11 @@ export function makeSideView(host, opts) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 100);
   // Framed for the formula-driven central radius (~0.25 at the widget's
-  // default beta, vs the old placeholder 1): pull the camera in so the
-  // portrait fills a comparable fraction of the view.
-  camera.position.set(1.05, 0.62, 1.25);
+  // default beta, vs the old placeholder 1): pulled in so the portrait
+  // fills a comparable fraction of the view. 2026-09-19 user request:
+  // noticeably MORE zoomed out for a better initial overview of the whole
+  // structure (central + exterior spheres + strata).
+  camera.position.set(1.7, 1.0, 2.0);
   camera.lookAt(0, 0, 0);
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;

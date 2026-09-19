@@ -911,9 +911,32 @@ Tracked work items; keep statuses updated.
      visible flash the old "seconds" comment promised. Gates: suite
      exit 0 after every phase; fingerprint bit-identical (regenerated
      once, only after P2's enumerated flowState-shape change which was
-     then SKIPPED — golden byte-unchanged); widget stub 0 failures;
-     tutorial smoke signature 2 FAILURES (stale L0-gate/L6-completes
-     checks, predating the 2026-09-18 renumbering).
+      then SKIPPED — golden byte-unchanged); widget stub 0 failures;
+      tutorial smoke signature 2 FAILURES (stale L0-gate/L6-completes
+      checks, predating the 2026-09-18 renumbering).
+28. DONE (2026-09-19, PENDING USER VISUAL CHECK): tutorial UX batch
+     (user request, display/tutorial layer only — solver untouched; full
+     suite exit 0; stub 0 failures; tutorial smoke ALL PASS after fixing
+     its 2 stale checks). (1) ENTER RESET: starting the tutorial resets
+     every parameter slider to its default (r = 0.25, theta = t = phi =
+     0, default beta) via restoreDefaults() from enter(); EXIT
+     PRESERVES the current positions (restoreDefaults is gone from
+     exit() — only leaveStratum runs if active, which restores the
+     user's own parked r/theta). (2) LESSON 1 SWEEP GATE: Next needs an
+     ADEQUATE sweep — per-frame accumulated slider travel
+     (|Δr| + |Δθs|) >= SWEEP_MIN 0.5 (state on LESSONS[1], re-armed on
+     entry) AND the target state; the task line shows the travel
+     percentage first, then the r/theta target with checkmarks. (3)
+     TASK TEXTS: simplified/staged — lesson 3 (r1) phase 0 reads
+     "enter the higher energy Morse stratum" and phase 1 "move t > 0
+     from there"; its gate now requires stratumRef() to HOLD (leaving
+     the stratum disables Next again). (4) SIDE-VIEW CAMERA: default
+     position (1.05, 0.62, 1.25) -> (1.7, 1.0, 2.0) — noticeably more
+     zoomed out for the initial overview. Scratch tests updated:
+     /tmp/kilo/tut-test.mjs (L0 gate "" lockAll, L1 sweep, L6 amber
+     off-toggle) and /tmp/kilo/hx/stub.mjs (enter-reset block, lesson-1
+     sweep, exit-preserve assertions; note theta readback is the number
+     0, use String()).
 
 
 ## Status / next milestone
